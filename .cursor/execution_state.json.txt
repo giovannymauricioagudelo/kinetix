@@ -1,0 +1,27 @@
+{
+  "current_phase": "phase_1",
+  "current_task_graph": [],
+  "agents": {
+    "daedalus": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "aegis": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "atlas": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "iris": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "hermes": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "hephaestus": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "sentinel": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" },
+    "chronos": { "status": "idle", "input": {}, "output": {}, "last_updated": "2024-09-15T08:00:00Z" }
+  },
+  "global_metrics": {
+    "total_tokens_consumed": 0,
+    "total_tokens_budget": 500000,
+    "current_phase_tokens": 0,
+    "execution_start_time": "2024-09-15T08:00:00Z",
+    "estimated_completion": "2024-12-15T08:00:00Z"
+  },
+  "circuit_breakers": {
+    "active": false,
+    "reason": "",
+    "human_intervention_required": false
+  },
+  "errors": []
+}
