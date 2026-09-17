@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 import hashlib
 import json
 
-from base_agent import BaseAgent, AgentConfig, AgentInput, AgentOutput, AgentStatus
+from src.agents.base_agent import BaseAgent, AgentConfig, AgentInput, AgentOutput, AgentStatus
 
 logger = logging.getLogger(__name__)
 
