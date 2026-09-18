@@ -437,6 +437,7 @@ class DatabaseAgent(BaseAgent):
             timeout_seconds=300
         )
         super().__init__(config)
+        self.version = "0.1.0"
         
         self.schema_manager = SchemaManager()
         self.migration_engine = MigrationEngine()
