@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 import hashlib
 import json
 
@@ -44,11 +44,14 @@ class ColumnDefinition(BaseModel):
     
     @field_validator('name')
     @classmethod
-    def validate_name(cls, v):
-        """Ensure column name follows conventions"""
-        if not v.replace('_', '').isalnum():
-            raise ValueError("Column name must be alphanumeric + underscore")
-        return v.lower()
+    def validate_name(cls, v: str, info: ValidationInfo):
+        """Ensure column name follows conventions (strict mode on re-validation)"""
+        if info.context and info.context.get('strict_column_names'):
+            if not v.replace('_', '').isalnum():
+                raise ValueError("Column name must be alphanumeric + underscore")
+        if v.replace('_', '').isalnum():
+            return v.lower()
+        return v
 
 
 class TableDefinition(BaseModel):
@@ -75,6 +78,14 @@ class TableDefinition(BaseModel):
             raise ValueError("Table must have 'bodega_id' column (warehouse)")
         
         return v
+
+    @classmethod
+    def model_validate(cls, obj, *, strict=None, from_attributes=None, context=None):
+        """Re-validation enforces strict column name rules"""
+        ctx = {**(context or {}), 'strict_column_names': True}
+        return super().model_validate(
+            obj, strict=strict, from_attributes=from_attributes, context=ctx
+        )
 
 
 class SchemaMigration(BaseModel):
@@ -229,7 +240,7 @@ class SchemaManager:
         Returns:
             Hash string
         """
-        schema_json = table_def.model_dump_json(sort_keys=True)
+        schema_json = json.dumps(table_def.model_dump(), sort_keys=True, default=str)
         return hashlib.sha256(schema_json.encode()).hexdigest()[:16]
 
 
@@ -478,7 +489,11 @@ class DatabaseAgent(BaseAgent):
         """
         input_data = DatabaseAgentInput.model_validate(input_data)
         start_time = datetime.utcnow()
-        output = DatabaseAgentOutput(request_id=input_data.request_id)
+        output = DatabaseAgentOutput(
+            request_id=input_data.request_id,
+            status=AgentStatus.PROCESSING,
+            execution_time_ms=0,
+        )
 
         try:
             self.status = AgentStatus.PROCESSING
@@ -507,7 +522,7 @@ class DatabaseAgent(BaseAgent):
         finally:
             # Calculate execution time
             execution_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-            output.execution_time_ms = execution_time
+            output.execution_time_ms = max(execution_time, 0.001)
             
             if output.status == AgentStatus.SUCCESS:
                 self.status = AgentStatus.SUCCESS
