@@ -1,7 +1,7 @@
 """
 AFP Main FastAPI Application
 Integrates all 8 agents via REST API
-VERSIÓN FINAL - COMPLETAMENTE CORREGIDA
+Complete and working version with Database Agent + APIs Agent
 """
 
 import logging
@@ -12,10 +12,9 @@ from contextlib import asynccontextmanager
 import time
 from datetime import datetime
 
-# ✅ IMPORTS CORREGIDOS
+# Import routes - CORRECTO
 from src.api.routes import database
-from src.api.routes import apis
-from src.api.routes import business_rules
+from src.api.routes import apis_routes
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +38,7 @@ async def lifespan(app: FastAPI):
     logger.info("📦 AGENTS AVAILABLE:")
     logger.info("  ✅ Database Agent       - Schema management & migrations")
     logger.info("  ✅ APIs Agent           - REST API generation")
-    logger.info("  ✅ Business Rules Agent - Logic & validations")
+    logger.info("  ⏳ Business Rules Agent - Logic & validations (Semana 3)")
     logger.info("  ⏳ Reporting Agent      - Report generation (Semana 3)")
     logger.info("  ⏳ QA Agent            - Testing & QA (Semana 4)")
     logger.info("  ⏳ Git Deployment Agent - Version control (Semana 4)")
@@ -59,6 +58,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 70)
     logger.info("🛑 AFP APPLICATION SHUTTING DOWN")
     logger.info("=" * 70)
+
 
 # ============================================================================
 # FASTAPI APP INITIALIZATION
@@ -254,18 +254,15 @@ async def status():
 # ✅ Database Agent routes
 logger.info("Registering Database Agent routes...")
 app.include_router(database.router)
-logger.info("  ✅ Database Agent routes registered at /api/v1/database")
+logger.info("  ✅ Database Agent routes registered")
 
 # ✅ APIs Agent routes
 logger.info("Registering APIs Agent routes...")
-app.include_router(apis.router)
-logger.info("  ✅ APIs Agent routes registered at /api/v1/apis")
-
-logger.info("Registering Business Rules Agent routes...")
-app.include_router(business_rules.router)
-logger.info("  ✅ Business Rules Agent routes registered at /api/v1/rules")
+app.include_router(apis_routes.router)
+logger.info("  ✅ APIs Agent routes registered")
 
 # Placeholder for future agents
+# app.include_router(rules_router)           # Business Rules Agent
 # app.include_router(reporting_router)       # Reporting Agent
 # app.include_router(qa_router)              # QA Agent
 # app.include_router(git_router)             # Git Deployment Agent
@@ -319,7 +316,7 @@ async def startup_checks():
     try:
         # Check Database Agent
         logger.info("  Checking Database Agent...")
-        from src.agents.database_agent.agent import DatabaseAgent
+        from agents.database_agent.agent import DatabaseAgent
         db_agent = DatabaseAgent()
         logger.info(f"    ✅ DatabaseAgent v{db_agent.version} loaded successfully")
         
@@ -329,7 +326,7 @@ async def startup_checks():
     try:
         # Check APIs Agent
         logger.info("  Checking APIs Agent...")
-        from src.agents.apis_agent.agent import APIsAgent
+        from agents.apis_agent.agent import APIsAgent
         apis_agent = APIsAgent()
         logger.info(f"    ✅ APIsAgent v{apis_agent.version} loaded successfully")
         
