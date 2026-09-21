@@ -10,6 +10,9 @@ python -m venv venv
 & .\venv\Scripts\python.exe -m pip install --upgrade pip
 & .\venv\Scripts\pip.exe install -r requirements-dev.txt
 
+# Commits con marca de tiempo ddMMyyyy HH:MM:SS
+git config core.hooksPath .githooks
+
 Write-Host ""
 Write-Host "Entorno listo. Activa el venv y arranca la API:"
 Write-Host "  .\venv\Scripts\Activate.ps1"

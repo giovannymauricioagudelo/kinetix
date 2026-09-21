@@ -1,0 +1,19 @@
+#!/bin/sh
+# Appends local timestamp ddMMyyyy HH:MM:SS to commit messages.
+# Installed via: git config core.hooksPath .githooks
+
+COMMIT_MSG_FILE=$1
+SOURCE=${2:-}
+
+case "$SOURCE" in
+  merge|squash)
+    exit 0
+    ;;
+esac
+
+if grep -qE '[0-9]{8} [0-9]{2}:[0-9]{2}:[0-9]{2}' "$COMMIT_MSG_FILE"; then
+  exit 0
+fi
+
+TS=$(date +"%d%m%Y %H:%M:%S")
+printf '\n%s\n' "$TS" >> "$COMMIT_MSG_FILE"

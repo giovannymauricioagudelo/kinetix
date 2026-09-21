@@ -34,6 +34,14 @@ pip install -r requirements-dev.txt
 
 `requirements.txt` tiene las dependencias de ejecución. `requirements-dev.txt` incluye esas más pytest y herramientas de calidad.
 
+Los mensajes de commit llevan al final la marca de tiempo local `ddMMyyyy HH:MM:SS` (p. ej. `20092026 21:48:05`). Tras clonar, activa el hook una vez:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+(en Linux/macOS también: `chmod +x .githooks/prepare-commit-msg`)
+
 ## Uso
 
 Con el entorno virtual **activado**:

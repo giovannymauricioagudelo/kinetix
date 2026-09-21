@@ -25,12 +25,12 @@ Si `pull` falla por cambios locales que bloquean el merge, informa qué archivos
 
 ## Palabras clave → Subir cambios (local → remoto)
 
-Disparadores: `subir repositorio`, `subir a git`, `push`, `publicar cambios`, `sincronizar hacia remoto`, `enviar al repositorio`, `commit y push`, `subir commit`.
+Disparadores: `subir repositorio`, `subir a git`, `push`, `publicar cambios`, `sincronizar hacia remoto`, `enviar al repositorio`, `commit y push`, `subir commit`, `actualiza git`, `actualizar git`.
 
 **Flujo:**
 1. En paralelo: `git status`, `git diff`, `git log -5 --oneline`
-2. No incluir en commit: `.venv/`, `.env`, credenciales, secretos.
-3. Si hay cambios: `git add` (solo archivos relevantes), commit con mensaje claro (1–2 frases, el **por qué**).
+2. No incluir en commit: `.venv/`, `.env`, credenciales, secretos, basura accidental (p. ej. dumps HTTP).
+3. Si hay cambios: `git add` (solo archivos relevantes), commit con mensaje claro (1–2 frases, el **por qué**) y **siempre** al final la marca de tiempo local en formato `ddMMyyyy HH:MM:SS` (ejemplo: `20092026 21:48:05`). El hook `.githooks/prepare-commit-msg` la añade si falta.
 4. `git push origin master`
 5. `git status` final y URL/commit hash.
 
@@ -61,6 +61,7 @@ Disparadores: `estado git`, `git status`, `¿estoy sincronizado?`, `diferencias 
 - Tras pull con cambios en dependencias: ofrecer `pip install -r requirements-dev.txt` dentro de `.venv`.
 - **Nunca** `git config --global`; si falta identidad para commit, usar variables de entorno solo para ese commit o pedir al usuario que configure `git config user.name` / `user.email` **sin** `--global`.
 - No `push --force` a `master` salvo petición explícita del usuario.
+- **Timestamp en commits:** formato obligatorio `ddMMyyyy HH:MM:SS` al final del mensaje. Hooks locales: `git config core.hooksPath .githooks` (sin `--global`).
 
 ## Respuesta al usuario
 
