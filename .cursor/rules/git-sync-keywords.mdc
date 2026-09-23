@@ -29,7 +29,7 @@ Disparadores: `subir repositorio`, `subir a git`, `push`, `publicar cambios`, `s
 
 **Flujo:**
 1. En paralelo: `git status`, `git diff`, `git log -5 --oneline`
-2. No incluir en commit: `.venv/`, `.env`, credenciales, secretos, basura accidental (p. ej. dumps HTTP).
+2. No incluir en commit: `venv/`, `.venv/`, `.env`, credenciales, secretos, basura accidental (p. ej. dumps HTTP).
 3. Si hay cambios: `git add` (solo archivos relevantes), commit con mensaje claro (1–2 frases, el **por qué**) y **siempre** al final la marca de tiempo local en formato `ddMMyyyy HH:MM:SS` (ejemplo: `20092026 21:48:05`). El hook `.githooks/prepare-commit-msg` la añade si falta.
 4. `git push origin master`
 5. `git status` final y URL/commit hash.
@@ -43,7 +43,7 @@ Disparadores: `igual al remoto`, `descartar cambios locales`, `forzar sincroniza
 **Flujo (solo con confirmación explícita):**
 1. `git fetch origin`
 2. `git reset --hard origin/master`
-3. `git clean -fd` (no usar `-x` para no borrar `.venv` ignorado si está en `.gitignore`; ojo: `.venv` no ignorado se elimina)
+3. `git clean -fd` (no usar `-x` para no borrar `venv/` ignorado; ojo: carpetas de entorno no ignoradas se eliminan)
 4. `git pull origin master`
 5. `git status`
 
@@ -57,12 +57,12 @@ Disparadores: `estado git`, `git status`, `¿estoy sincronizado?`, `diferencias 
 
 ## Convenciones del proyecto
 
-- Entorno virtual: **`.venv`** (no `venv`). Activación PowerShell: `.\.venv\Scripts\Activate.ps1`
-- Tras pull con cambios en dependencias: ofrecer `pip install -r requirements-dev.txt` dentro de `.venv`.
+- Entorno virtual: **`venv/`** (creado por `setup.ps1`). Activación PowerShell: `.\venv\Scripts\Activate.ps1`
+- Tras pull con cambios en dependencias: ofrecer `pip install -r requirements-dev.txt` dentro de `venv`.
 - **Nunca** `git config --global`; si falta identidad para commit, usar variables de entorno solo para ese commit o pedir al usuario que configure `git config user.name` / `user.email` **sin** `--global`.
 - No `push --force` a `master` salvo petición explícita del usuario.
 - **Timestamp en commits:** formato obligatorio `ddMMyyyy HH:MM:SS` al final del mensaje. Hooks locales: `git config core.hooksPath .githooks` (sin `--global`).
 
 ## Respuesta al usuario
 
-Tras sync, responder en español con: resultado (up to date / N commits), rama, y siguiente paso obvio si aplica (conflictos, reinstalar deps, activar `.venv`).
+Tras sync, responder en español con: resultado (up to date / N commits), rama, y siguiente paso obvio si aplica (conflictos, reinstalar deps, activar `venv`).
