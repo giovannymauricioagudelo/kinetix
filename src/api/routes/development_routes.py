@@ -1,6 +1,5 @@
 ﻿"""
-FastAPI Routes for Development Agent
-Gestiona branches, PRs, code review
+Vector (DevelopmentAgent) — branches, PRs y code review.
 """
 
 import logging
@@ -8,9 +7,11 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, Body
 from datetime import datetime
 
+from src.agents.agent_catalog import VECTOR, health_service_name, openapi_tag
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/development", tags=["Development Agent"])
+router = APIRouter(prefix="/api/v1/development", tags=[openapi_tag(VECTOR)])
 
 # Store para PRs y branches
 _branches_store: Dict[str, Dict[str, Any]] = {}
@@ -241,7 +242,9 @@ async def health_check() -> Dict[str, Any]:
     """Health check for Development Agent"""
     return {
         "status": "healthy ✅",
-        "service": "DevelopmentAgent",
+        "service": health_service_name(VECTOR),
+        "codename": VECTOR.codename,
+        "legacy_id": VECTOR.legacy_id,
         "active_branches": len(_branches_store),
         "open_prs": len([p for p in _prs_store.values() if p.get("status") == "open"]),
         "timestamp": datetime.utcnow().isoformat()

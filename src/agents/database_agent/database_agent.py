@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 import hashlib
 import json
 
+from src.agents.agent_catalog import NEXUS
 from src.agents.base_agent import BaseAgent, AgentConfig, AgentInput, AgentOutput, AgentStatus
 
 logger = logging.getLogger(__name__)
@@ -437,13 +438,13 @@ class BackupManager:
 
 class DatabaseAgent(BaseAgent):
     """
-    Main Database Agent
+    Nexus (DatabaseAgent) — núcleo de conexión de datos.
     Orchestrates: Schema Manager, Migration Engine, Audit Logger, Backup Manager
     """
 
     def __init__(self):
         config = AgentConfig(
-            name="DatabaseAgent",
+            name=NEXUS.codename,
             version="0.1.0",
             timeout_seconds=300
         )

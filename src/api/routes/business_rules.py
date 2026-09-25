@@ -1,12 +1,12 @@
 ﻿"""
-FastAPI Routes for Business Rules Agent
-Endpoints para crear, evaluar y auditar reglas de negocio
-Conectado a SQL Server kinetix
+Matrix (BusinessRulesAgent) — reglas de negocio sobre SQL Server kinetix.
 """
 
 import logging
 import os
 import pyodbc
+
+from src.agents.agent_catalog import MATRIX, health_service_name, openapi_tag
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, Body
 from datetime import datetime
@@ -60,7 +60,7 @@ except ImportError as e1:
 # Crear router
 router = APIRouter(
     prefix="/api/v1/rules",
-    tags=["Business Rules Agent"]
+    tags=[openapi_tag(MATRIX)],
 )
 
 # Instancia del agente
@@ -307,6 +307,8 @@ async def health_check() -> Dict[str, Any]:
     """Health check for the Business Rules Agent"""
     return {
         "status": "healthy ✅",
-        "service": "BusinessRulesAgent (SQL Server integrated)",
+        "service": health_service_name(MATRIX, "SQL Server integrated"),
+        "codename": MATRIX.codename,
+        "legacy_id": MATRIX.legacy_id,
         "timestamp": datetime.utcnow().isoformat()
     }

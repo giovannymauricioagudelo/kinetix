@@ -1,10 +1,11 @@
 """
-APIs Agent - Automatic REST API Generation
-Genera endpoints CRUD automáticamente desde definiciones de tablas
+Synapse (APIsAgent) — generación automática de REST API / CRUD.
 """
 
 import logging
 from typing import Dict, Any, List, Optional
+
+from src.agents.agent_catalog import SYNAPSE
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -99,7 +100,7 @@ class APIsAgent:
     """Agente para generar APIs REST automáticamente"""
     
     def __init__(self):
-        self.name = "APIsAgent"
+        self.name = SYNAPSE.codename
         self.version = "0.1.0"
         logger.info(f"✅ {self.name} v{self.version} initialized")
     

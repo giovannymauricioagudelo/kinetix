@@ -1,8 +1,8 @@
 """
-Business Rules Agent - Declarative Rule Engine
-Motor de reglas JSON para validaciones multisector DMS Advance
-Soporta: retenciones, límites de crédito, validaciones de negocio, auditoría
+Matrix (BusinessRulesAgent) — motor declarativo de reglas de negocio.
 """
+
+from src.agents.agent_catalog import MATRIX
 
 import logging
 from typing import Dict, Any, List, Optional, Tuple
@@ -280,7 +280,7 @@ class BusinessRulesAgent:
     """Agente para evaluar y gestionar reglas de negocio"""
     
     def __init__(self):
-        self.name = "BusinessRulesAgent"
+        self.name = MATRIX.codename
         self.version = "0.1.0"
         self.rule_engine = RuleEngine()
         self.rules_store: Dict[str, BusinessRule] = {}

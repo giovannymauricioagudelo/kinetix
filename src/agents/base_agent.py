@@ -58,15 +58,15 @@ class BaseAgent(ABC):
     """
     Abstract base class for all AFP agents.
     
-    All 8 agents inherit from this:
-    - Database Agent
-    - APIs Agent
-    - Business Rules Agent
-    - Reporting Agent
-    - QA Agent
-    - Git Deployment Agent
-    - Development Agent
-    - Custom AI Agents
+    Operational agents (codenames):
+    - Nexus (DatabaseAgent)
+    - Synapse (APIsAgent)
+    - Matrix (BusinessRulesAgent)
+    - Insight (ReportingAgent)
+    - Prism (QAAgent)
+    - Orbit (GitDeploymentAgent)
+    - Vector (DevelopmentAgent)
+    - Custom AI Agents (extensible)
     """
 
     def __init__(self, config: AgentConfig):

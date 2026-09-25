@@ -4,17 +4,20 @@
 **Versión:** 0.1  
 **Fecha:** Septiembre 03, 2026
 
+> **Identidad pública (codenames):** Nexus, Synapse, Matrix, Insight, Prism, Orbit, Vector.  
+> Tabla completa y fuente de verdad en código: `docs/AGENT_CODENAMES.md` y `src/agents/agent_catalog.py`.
+
 ---
 
 ## ÍNDICE DE AGENTES
 
-1. **Database Agent** - Gestión de esquemas y datos
-2. **APIs Agent** - Generación de endpoints
-3. **Business Rules Agent** - Lógica de negocio
-4. **Reporting Agent** - Reportería y visualización
-5. **QA Agent** - Control de calidad
-6. **Git Deployment Agent** - Versionado
-7. **Development Agent** - Despliegue a infraestructura
+1. **Nexus** (Database Agent) - Gestión de esquemas y datos
+2. **Synapse** (APIs Agent) - Generación de endpoints
+3. **Matrix** (Business Rules Agent) - Lógica de negocio
+4. **Insight** (Reporting Agent) - Reportería y visualización
+5. **Prism** (QA Agent) - Control de calidad
+6. **Orbit** (Git Deployment Agent) - Versionado y despliegue
+7. **Vector** (Development Agent) - Desarrollo y PRs
 8. **Custom AI Agents** - Agentes de negocio personalizados
 
 ---

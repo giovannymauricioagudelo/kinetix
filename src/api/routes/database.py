@@ -1,11 +1,12 @@
 ﻿"""
-FastAPI Routes for Database Agent
-SQL Server kinetix integration
+Nexus (DatabaseAgent) — FastAPI routes. SQL Server kinetix integration.
 """
 
 import logging
 import os
 import pyodbc
+
+from src.agents.agent_catalog import NEXUS, health_service_name, openapi_tag
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Body
 from datetime import datetime
@@ -28,7 +29,7 @@ def get_sql_connection():
         logger.error(f"❌ Error conectando a SQL Server: {str(e)}")
         return None
 
-router = APIRouter(prefix="/api/v1/database", tags=["Database Agent"])
+router = APIRouter(prefix="/api/v1/database", tags=[openapi_tag(NEXUS)])
 
 @router.post("/create-table", response_model=Dict[str, Any], status_code=201)
 async def create_table(table_definition: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -137,6 +138,8 @@ async def health_check() -> Dict[str, Any]:
     """Health check for Database Agent"""
     return {
         "status": "healthy ✅",
-        "service": "DatabaseAgent (SQL Server integrated)",
+        "service": health_service_name(NEXUS, "SQL Server integrated"),
+        "codename": NEXUS.codename,
+        "legacy_id": NEXUS.legacy_id,
         "timestamp": datetime.utcnow().isoformat()
     }

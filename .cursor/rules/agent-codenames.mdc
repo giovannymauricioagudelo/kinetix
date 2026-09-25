@@ -1,0 +1,22 @@
+---
+description: Codenames canónicos de los 7 agentes AFP en Kinetix Studio
+alwaysApply: true
+---
+
+# Agentes AFP — codenames
+
+En documentación, logs, OpenAPI tags y respuestas de API usar los **codenames** como identidad principal:
+
+| Codename | Legacy (clase/módulo) |
+|----------|------------------------|
+| Nexus | DatabaseAgent |
+| Synapse | APIsAgent |
+| Matrix | BusinessRulesAgent |
+| Insight | ReportingAgent |
+| Prism | QAAgent |
+| Orbit | GitDeploymentAgent |
+| Vector | DevelopmentAgent |
+
+Fuente de verdad: `src/agents/agent_catalog.py` (`AgentProfile`, `openapi_tag`, `health_service_name`).
+
+No renombrar clases Python legacy salvo petición explícita; sí usar codenames en UX, tags y mensajes orientados al usuario.

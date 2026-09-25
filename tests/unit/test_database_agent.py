@@ -1,12 +1,12 @@
 """
-Unit tests for Database Agent
+Unit tests for Nexus (DatabaseAgent)
 Tests: Schema Manager, Migration Engine, Audit Logger, Backup Manager
 """
 
 import pytest
 import asyncio
 from datetime import datetime
-from database_agent import (
+from src.agents.database_agent.database_agent import (
     DatabaseAgent,
     DatabaseAgentInput,
     DatabaseAgentOutput,
@@ -18,7 +18,7 @@ from database_agent import (
     MigrationEngine,
     AuditLogger,
     BackupManager,
-    AgentStatus
+    AgentStatus,
 )
 
 
@@ -366,7 +366,7 @@ class TestDatabaseAgent:
         """Test agent initializes correctly"""
         agent = DatabaseAgent()
         
-        assert agent.config.name == "DatabaseAgent"
+        assert agent.config.name == "Nexus"
         assert agent.schema_manager is not None
         assert agent.migration_engine is not None
         assert agent.audit_logger is not None
@@ -494,7 +494,7 @@ class TestDatabaseAgent:
         assert "name" in status
         assert "version" in status
         assert "status" in status
-        assert status["name"] == "DatabaseAgent"
+        assert status["name"] == "Nexus"
 
 
 # ============================================================================

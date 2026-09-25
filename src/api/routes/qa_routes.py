@@ -1,9 +1,10 @@
 """
-QAAgent - Router FastAPI
-8 Endpoints para Testing, Validación y Cobertura del BusinessRulesEngine
+Prism (QAAgent) — testing, validación y cobertura.
 """
 
 from fastapi import APIRouter, HTTPException, Query
+
+from src.agents.agent_catalog import PRISM, openapi_tag
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import pyodbc
@@ -12,7 +13,7 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=[openapi_tag(PRISM)])
 
 # ============================================================================
 # MODELOS PYDANTIC
@@ -785,7 +786,8 @@ async def health_check() -> Dict[str, Any]:
         
         return {
             "resultado": "OK",
-            "agente": "QAAgent",
+            "agente": PRISM.codename,
+            "legacy_id": PRISM.legacy_id,
             "estado": estado,
             "sql_server": "conectado",
             "tablas": "presentes" if tablas_ok else "ausentes",
@@ -797,7 +799,8 @@ async def health_check() -> Dict[str, Any]:
         logger.error(f"Health check falló: {e}")
         return {
             "resultado": "ERROR",
-            "agente": "QAAgent",
+            "agente": PRISM.codename,
+            "legacy_id": PRISM.legacy_id,
             "estado": "NO_DISPONIBLE",
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()

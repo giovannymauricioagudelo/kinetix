@@ -1,17 +1,18 @@
 ﻿"""
-FastAPI Routes for Git Deployment Agent
-Gestiona deployments a producción
+Orbit (GitDeploymentAgent) — despliegues a producción.
 """
 
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Body
+
+from src.agents.agent_catalog import ORBIT, health_service_name, openapi_tag
 from datetime import datetime
 import json
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/git-deployment", tags=["Git Deployment Agent"])
+router = APIRouter(prefix="/api/v1/git-deployment", tags=[openapi_tag(ORBIT)])
 
 # Store para deployments (en memoria, para simulación)
 _deployments_store: Dict[str, Dict[str, Any]] = {}
@@ -207,7 +208,9 @@ async def health_check() -> Dict[str, Any]:
     """Health check for Git Deployment Agent"""
     return {
         "status": "healthy ✅",
-        "service": "GitDeploymentAgent",
+        "service": health_service_name(ORBIT),
+        "codename": ORBIT.codename,
+        "legacy_id": ORBIT.legacy_id,
         "deployments_active": len([d for d in _deployments_store.values() if d.get("status") == "in_progress"]),
         "timestamp": datetime.utcnow().isoformat()
     }

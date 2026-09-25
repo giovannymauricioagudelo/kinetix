@@ -1,6 +1,5 @@
 ﻿"""
-FastAPI Routes for APIs Agent
-Consume external APIs
+Synapse (APIsAgent) — integración y generación de APIs externas.
 """
 
 import logging
@@ -8,9 +7,11 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Body
 from datetime import datetime
 
+from src.agents.agent_catalog import SYNAPSE, health_service_name, openapi_tag
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/apis", tags=["APIs Agent"])
+router = APIRouter(prefix="/api/v1/apis", tags=[openapi_tag(SYNAPSE)])
 
 @router.get("/list", response_model=Dict[str, Any])
 async def list_apis() -> Dict[str, Any]:
@@ -97,6 +98,8 @@ async def health_check() -> Dict[str, Any]:
     """Health check for APIs Agent"""
     return {
         "status": "healthy ✅",
-        "service": "APIsAgent",
+        "service": health_service_name(SYNAPSE),
+        "codename": SYNAPSE.codename,
+        "legacy_id": SYNAPSE.legacy_id,
         "timestamp": datetime.utcnow().isoformat()
     }

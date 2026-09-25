@@ -1,6 +1,6 @@
 # Kinetix Studio
 
-Plataforma para generar y gestionar esquemas de base de datos y especificaciones REST mediante agentes (Database Agent y APIs Agent) expuestos por FastAPI.
+Plataforma AFP con agentes **Nexus**, **Synapse**, **Matrix**, **Insight**, **Prism**, **Orbit** y **Vector** (ver [docs/AGENT_CODENAMES.md](docs/AGENT_CODENAMES.md)), expuestos por FastAPI.
 
 ## Requisitos
 
@@ -72,10 +72,12 @@ pytest tests/ -v
 ## Estructura
 
 ```
-src/agents/database_agent/   Database Agent
-src/agents/apis_agent/       APIs Agent
+src/agents/agent_catalog.py  Codenames (Nexus, Synapse, …)
+src/agents/database_agent/   Nexus (DatabaseAgent)
+src/agents/apis_agent/       Synapse (APIsAgent)
+src/agents/business_rules_agent/  Matrix (BusinessRulesAgent)
 src/api/main.py              App FastAPI
-src/api/routes/              Rutas REST
+src/api/routes/              Rutas REST por agente
 tests/unit/                  Pruebas
 run.py                       Arranque local
 ```

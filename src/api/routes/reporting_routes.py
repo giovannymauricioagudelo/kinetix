@@ -1,9 +1,10 @@
 """
-ReportingAgent - Router FastAPI
-8 Endpoints para Reportes, Dashboards y KPIs del BusinessRulesEngine
+Insight (ReportingAgent) — reportes, dashboards y KPIs.
 """
 
 from fastapi import APIRouter, HTTPException, Query
+
+from src.agents.agent_catalog import INSIGHT, openapi_tag
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import pyodbc
@@ -12,7 +13,7 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=[openapi_tag(INSIGHT)])
 
 # ============================================================================
 # MODELOS PYDANTIC
@@ -858,7 +859,7 @@ async def exportar_reporte(
 @router.get("/health", summary="Health check del Reporting Agent")
 async def health_check() -> Dict[str, Any]:
     """
-    Verificar que ReportingAgent está operacional.
+    Verificar que Insight (ReportingAgent) está operacional.
     
     Verifica:
     - Conexión a SQL Server
@@ -890,7 +891,8 @@ async def health_check() -> Dict[str, Any]:
         
         return {
             "resultado": "OK",
-            "agente": "ReportingAgent",
+            "agente": INSIGHT.codename,
+            "legacy_id": INSIGHT.legacy_id,
             "estado": estado,
             "sql_server": "conectado",
             "tabla_auditoria": "presente" if tabla_existe else "ausente",
@@ -902,7 +904,8 @@ async def health_check() -> Dict[str, Any]:
         logger.error(f"Health check falló: {e}")
         return {
             "resultado": "ERROR",
-            "agente": "ReportingAgent",
+            "agente": INSIGHT.codename,
+            "legacy_id": INSIGHT.legacy_id,
             "estado": "NO_DISPONIBLE",
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
