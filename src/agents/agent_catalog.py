@@ -69,6 +69,13 @@ VECTOR = AgentProfile(
     "development",
     8,
 )
+GENESIS = AgentProfile(
+    "Genesis",
+    "CustomAIAgent",
+    "Genera código y soluciones AI automáticamente.",
+    "genesis",
+    7,
+)
 
 ALL_AGENTS: Tuple[AgentProfile, ...] = (
     NEXUS,
@@ -78,6 +85,7 @@ ALL_AGENTS: Tuple[AgentProfile, ...] = (
     PRISM,
     ORBIT,
     VECTOR,
+    GENESIS,
 )
 
 BY_LEGACY: Dict[str, AgentProfile] = {p.legacy_id: p for p in ALL_AGENTS}

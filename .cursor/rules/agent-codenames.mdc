@@ -1,5 +1,5 @@
 ---
-description: Codenames canónicos de los 7 agentes AFP en Kinetix Studio
+description: Codenames canónicos de los 8 agentes AFP en Kinetix Studio
 alwaysApply: true
 ---
 
@@ -16,6 +16,7 @@ En documentación, logs, OpenAPI tags y respuestas de API usar los **codenames**
 | Prism | QAAgent |
 | Orbit | GitDeploymentAgent |
 | Vector | DevelopmentAgent |
+| Genesis | CustomAIAgent |
 
 Fuente de verdad: `src/agents/agent_catalog.py` (`AgentProfile`, `openapi_tag`, `health_service_name`).
 

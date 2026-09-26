@@ -11,5 +11,6 @@ Identidad pública del proyecto. Las clases legacy se mantienen en código por c
 | **Prism** | QAAgent | El guardián que analiza y asegura la calidad. |
 | **Orbit** | GitDeploymentAgent | El que pone la aplicación en órbita (producción). |
 | **Vector** | DevelopmentAgent | El taller principal donde se moldea el código. |
+| **Genesis** | CustomAIAgent | Genera código y soluciones AI automáticamente. |
 
 Fuente de verdad en código: `src/agents/agent_catalog.py`.

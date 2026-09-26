@@ -1,6 +1,6 @@
 # Kinetix Studio
 
-Plataforma AFP con agentes **Nexus**, **Synapse**, **Matrix**, **Insight**, **Prism**, **Orbit** y **Vector** (ver [docs/AGENT_CODENAMES.md](docs/AGENT_CODENAMES.md)), expuestos por FastAPI.
+Plataforma AFP con agentes **Nexus**, **Synapse**, **Matrix**, **Insight**, **Prism**, **Orbit**, **Vector** y **Genesis** (ver [docs/AGENT_CODENAMES.md](docs/AGENT_CODENAMES.md)), expuestos por FastAPI.
 
 ## Requisitos
 
@@ -76,6 +76,7 @@ src/agents/agent_catalog.py  Codenames (Nexus, Synapse, …)
 src/agents/database_agent/   Nexus (DatabaseAgent)
 src/agents/apis_agent/       Synapse (APIsAgent)
 src/agents/business_rules_agent/  Matrix (BusinessRulesAgent)
+src/agents/custom_ai_agent/  Genesis (CustomAIAgent)
 src/api/main.py              App FastAPI
 src/api/routes/              Rutas REST por agente
 tests/unit/                  Pruebas

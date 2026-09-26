@@ -66,7 +66,7 @@ class BaseAgent(ABC):
     - Prism (QAAgent)
     - Orbit (GitDeploymentAgent)
     - Vector (DevelopmentAgent)
-    - Custom AI Agents (extensible)
+    - Genesis (CustomAIAgent)
     """
 
     def __init__(self, config: AgentConfig):
