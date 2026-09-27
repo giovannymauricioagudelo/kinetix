@@ -1,0 +1,348 @@
+version: '3.9'
+
+services:
+  # ============================================================================
+  # DATABASE - PostgreSQL con replica de lectura
+  # ============================================================================
+  
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: kinetix-postgres-primary
+    environment:
+      POSTGRES_DB: kinetix
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "-c max_connections=200 -c shared_buffers=256MB"
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kinetix
+    command: |
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
+  
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: kinetix-postgres-replica
+    environment:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kinetix
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: |
+      bash -c "
+        pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U postgres -v -P -W &&
+        echo 'standby_mode = on' >> /var/lib/postgresql/data/recovery.conf &&
+        postgres
+      "
+  
+  # ============================================================================
+  # CACHE - Redis Cluster (3 instancias)
+  # ============================================================================
+  
+  redis-1:
+    image: redis:7-alpine
+    container_name: kinetix-redis-1
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-1-data:/data
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  redis-2:
+    image: redis:7-alpine
+    container_name: kinetix-redis-2
+    command: redis-server --port 6380 --cluster-enabled yes --cluster-config-file nodes.conf
+    ports:
+      - "6380:6380"
+    volumes:
+      - redis-2-data:/data
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  redis-3:
+    image: redis:7-alpine
+    container_name: kinetix-redis-3
+    command: redis-server --port 6381 --cluster-enabled yes --cluster-config-file nodes.conf
+    ports:
+      - "6381:6381"
+    volumes:
+      - redis-3-data:/data
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6381", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # ============================================================================
+  # MESSAGE QUEUE - RabbitMQ
+  # ============================================================================
+  
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: kinetix-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kinetix
+  
+  # ============================================================================
+  # LOAD BALANCER - Nginx
+  # ============================================================================
+  
+  nginx:
+    image: nginx:alpine
+    container_name: kinetix-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - kinetix-api-1
+      - kinetix-api-2
+      - kinetix-api-3
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # ============================================================================
+  # API INSTANCES - 3 replicas
+  # ============================================================================
+  
+  kinetix-api-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.scalable
+    container_name: kinetix-api-1
+    environment:
+      PG_HOST: postgres-primary
+      PG_PORT: 5432
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_DATABASE: kinetix
+      REDIS_HOST: redis-1
+      REDIS_PORT: 6379
+      ENVIRONMENT: production
+      INSTANCE_ID: 1
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-1:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  kinetix-api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.scalable
+    container_name: kinetix-api-2
+    environment:
+      PG_HOST: postgres-primary
+      PG_PORT: 5432
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_DATABASE: kinetix
+      REDIS_HOST: redis-2
+      REDIS_PORT: 6380
+      ENVIRONMENT: production
+      INSTANCE_ID: 2
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  kinetix-api-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.scalable
+    container_name: kinetix-api-3
+    environment:
+      PG_HOST: postgres-primary
+      PG_PORT: 5432
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_DATABASE: kinetix
+      REDIS_HOST: redis-3
+      REDIS_PORT: 6381
+      ENVIRONMENT: production
+      INSTANCE_ID: 3
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # ============================================================================
+  # MONITORING - Prometheus
+  # ============================================================================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kinetix-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "9090:9090"
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # ============================================================================
+  # VISUALIZATION - Grafana
+  # ============================================================================
+  
+  grafana:
+    image: grafana/grafana:latest
+    container_name: kinetix-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # ============================================================================
+  # TRACING - Jaeger
+  # ============================================================================
+  
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: kinetix-jaeger
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+    networks:
+      - kinetix
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:16686/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  kinetix:
+    driver: bridge
+
+volumes:
+  postgres-primary-data:
+  postgres-replica-data:
+  redis-1-data:
+  redis-2-data:
+  redis-3-data:
+  rabbitmq-data:
+  prometheus-data:
+  grafana-data:
