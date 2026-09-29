@@ -12,5 +12,6 @@ Identidad pública del proyecto. Las clases legacy se mantienen en código por c
 | **Orbit** | GitDeploymentAgent | El que pone la aplicación en órbita (producción). |
 | **Vector** | DevelopmentAgent | El taller principal donde se moldea el código. |
 | **Genesis** | CustomAIAgent | Genera código y soluciones AI automáticamente. |
+| **Aurora** | InterfaceDesignAgent | Diseña sistemas UX/UI, componentes y accesibilidad multiplataforma. |
 
 Fuente de verdad en código: `src/agents/agent_catalog.py`.

@@ -76,6 +76,13 @@ GENESIS = AgentProfile(
     "genesis",
     7,
 )
+AURORA = AgentProfile(
+    "Aurora",
+    "InterfaceDesignAgent",
+    "Diseña sistemas UX/UI, componentes y accesibilidad multiplataforma.",
+    "aurora",
+    10,
+)
 
 ALL_AGENTS: Tuple[AgentProfile, ...] = (
     NEXUS,
@@ -86,6 +93,7 @@ ALL_AGENTS: Tuple[AgentProfile, ...] = (
     ORBIT,
     VECTOR,
     GENESIS,
+    AURORA,
 )
 
 BY_LEGACY: Dict[str, AgentProfile] = {p.legacy_id: p for p in ALL_AGENTS}

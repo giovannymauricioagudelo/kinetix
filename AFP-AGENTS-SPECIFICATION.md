@@ -4,7 +4,7 @@
 **Versión:** 0.1  
 **Fecha:** Septiembre 03, 2026
 
-> **Identidad pública (codenames):** Nexus, Synapse, Matrix, Insight, Prism, Orbit, Vector, Genesis.  
+> **Identidad pública (codenames):** Nexus, Synapse, Matrix, Insight, Prism, Orbit, Vector, Genesis, Aurora.  
 > Tabla completa: `docs/AGENT_CODENAMES.md` y `src/agents/agent_catalog.py`.
 
 ---
@@ -19,6 +19,7 @@
 6. **Orbit** (Git Deployment Agent) - Versionado y despliegue
 7. **Vector** (Development Agent) - Desarrollo y PRs
 8. **Genesis** (Custom AI Agent) - Genera código y soluciones AI automáticamente
+9. **Aurora** (Interface Design Agent) - Design systems UX/UI y accesibilidad
 
 ---
 
