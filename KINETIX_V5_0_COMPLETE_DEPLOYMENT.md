@@ -190,7 +190,7 @@ GET    /                                            Root endpoint
 - ✅ Virtual environment activated
 - ✅ `pip install -r requirements-scalability-FINAL.txt`
 - ✅ SQL Server instance running
-- ✅ Credentials: `sa` / `Geomou0812`
+- ✅ Credentials: `sa` / variable de entorno `SQLSERVER_PASSWORD`
 - ✅ Database: `kinetix` created
 
 ### Deployment Steps

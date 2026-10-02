@@ -336,7 +336,7 @@ async def create_sql_pool(min_size=10, max_size=100):
     Server=localhost;
     Database=kinetix;
     UID=sa;
-    PWD=Geomou0812;
+    PWD=<SQLSERVER_PASSWORD>;
     TrustServerCertificate=yes;
     """
     

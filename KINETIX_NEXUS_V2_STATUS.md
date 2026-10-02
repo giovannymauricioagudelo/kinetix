@@ -142,8 +142,8 @@ En Swagger (`http://127.0.0.1:8000/docs`):
 - Server: `localhost`
 - Database: `kinetix`
 - User: `sa`
-- Password: `Geomou0812`
-- Connection String: `Driver={ODBC Driver 18 for SQL Server};Server=localhost;Database=kinetix;UID=sa;PWD=Geomou0812;TrustServerCertificate=yes;`
+- Password: variable de entorno `SQLSERVER_PASSWORD`
+- Connection String: `Driver={ODBC Driver 18 for SQL Server};Server=localhost;Database=kinetix;UID=sa;PWD=<SQLSERVER_PASSWORD>;TrustServerCertificate=yes;`
 
 **Status:** DEV mode (conexiones lazy, no fallan si BD no está disponible)
 

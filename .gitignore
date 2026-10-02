@@ -1,5 +1,6 @@
 venv/
 .venv/
+sentinel-env/
 logs/
 __pycache__/
 *.py[cod]
@@ -11,3 +12,7 @@ htmlcov/
 .env
 .env.local
 .DS_Store
+files/
+files.zip
+*.bak
+*_BACKUP_*
