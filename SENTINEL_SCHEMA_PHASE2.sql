@@ -1,4 +1,4 @@
---| ============================================================================ |
+﻿--| ============================================================================ |
 --| SENTINEL v2 + ARGUS - Migración incremental sobre SENTINEL_SCHEMA_SPANISH.sql |
 --| Idempotente: se puede ejecutar varias veces y no borra datos                 |
 --| ============================================================================ |
@@ -42,18 +42,40 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_fichas_usuario_tipo' 
     CREATE INDEX idx_fichas_usuario_tipo ON dbo.fichas_acceso(id_usuario, tipo_ficha, revocada);
 GO
 
+--| Revocación de fichas: fecha de revocación (algunas bases solo tienen la bandera revocada) |
+IF COL_LENGTH('dbo.fichas_acceso', 'revocada_en') IS NULL
+    ALTER TABLE dbo.fichas_acceso ADD revocada_en DATETIME NULL;
+GO
+
 --| Permisos de administración de Sentinel y de monitoreo de Argus |
-MERGE dbo.permisos AS destino
-USING (VALUES
+--| nombre_permiso solo existe en algunas bases: se inserta con SQL dinámico cuando está |
+DECLARE @permisos TABLE (id NVARCHAR(50), nombre NVARCHAR(100), recurso NVARCHAR(100), accion NVARCHAR(100), descripcion NVARCHAR(500));
+INSERT INTO @permisos VALUES
     ('perm_sentinel_001', N'Asignar Roles',     'roles',     'asignar',   N'Asignar roles a usuarios de la empresa'),
     ('perm_sentinel_002', N'Otorgar Permisos',  'permisos',  'otorgar',   N'Otorgar permisos a roles de la empresa'),
     ('perm_argus_001',    N'Ver Monitoreo',     'monitoreo', 'ver',       N'Consultar métricas, salud, alertas y reportes de Argus'),
-    ('perm_argus_002',    N'Reconocer Alertas', 'alertas',   'reconocer', N'Reconocer alertas activas de Argus')
-) AS origen (id, nombre_permiso, recurso, accion, descripcion)
-ON destino.id = origen.id
-WHEN NOT MATCHED THEN
-    INSERT (id, nombre_permiso, recurso, accion, descripcion)
-    VALUES (origen.id, origen.nombre_permiso, origen.recurso, origen.accion, origen.descripcion);
+    ('perm_argus_002',    N'Reconocer Alertas', 'alertas',   'reconocer', N'Reconocer alertas activas de Argus');
+
+DECLARE @id NVARCHAR(50), @nombre NVARCHAR(100), @recurso NVARCHAR(100), @accion NVARCHAR(100), @descripcion NVARCHAR(500);
+DECLARE @con_nombre BIT = CASE WHEN COL_LENGTH('dbo.permisos', 'nombre_permiso') IS NULL THEN 0 ELSE 1 END;
+DECLARE cursor_permisos CURSOR LOCAL FAST_FORWARD FOR
+    SELECT p.id, p.nombre, p.recurso, p.accion, p.descripcion FROM @permisos p
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.permisos e WHERE e.id = p.id);
+OPEN cursor_permisos;
+FETCH NEXT FROM cursor_permisos INTO @id, @nombre, @recurso, @accion, @descripcion;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF @con_nombre = 1
+        EXEC sp_executesql
+            N'INSERT INTO dbo.permisos (id, nombre_permiso, recurso, accion, descripcion) VALUES (@id, @nombre, @recurso, @accion, @descripcion)',
+            N'@id NVARCHAR(50), @nombre NVARCHAR(100), @recurso NVARCHAR(100), @accion NVARCHAR(100), @descripcion NVARCHAR(500)',
+            @id, @nombre, @recurso, @accion, @descripcion;
+    ELSE
+        INSERT INTO dbo.permisos (id, recurso, accion, descripcion) VALUES (@id, @recurso, @accion, @descripcion);
+    FETCH NEXT FROM cursor_permisos INTO @id, @nombre, @recurso, @accion, @descripcion;
+END
+CLOSE cursor_permisos;
+DEALLOCATE cursor_permisos;
 GO
 
 --| rol_admin recibe todos los permisos nuevos; rol_auditor puede ver el monitoreo |

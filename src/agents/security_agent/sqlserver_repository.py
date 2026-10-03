@@ -1,11 +1,16 @@
-"""Persistencia de Sentinel en SQL Server (base kinetix, esquema SENTINEL_SCHEMA_*.sql)."""
+"""
+Persistencia de Sentinel en SQL Server (base kinetix).
+
+Las bases existentes no comparten todas las columnas opcionales (p. ej. roles.estado,
+fichas_acceso.ficha_hash, usuarios_roles.expira_en), así que se detectan al usarlas.
+"""
 
 from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import pyodbc
 
@@ -21,6 +26,7 @@ def _token_hash(jti: str, kind: str) -> str:
 class SqlServerSecurityRepository(SecurityRepository):
     def __init__(self, settings: SqlServerSettings) -> None:
         self._connection_string = settings.connection_string()
+        self._columns: Dict[Tuple[str, str], bool] = {}
 
     @contextmanager
     def _cursor(self, commit: bool = False) -> Iterator[pyodbc.Cursor]:
@@ -37,9 +43,17 @@ class SqlServerSecurityRepository(SecurityRepository):
         with self._cursor() as cur:
             cur.execute("SELECT 1")
 
+    def _has_column(self, table: str, column: str) -> bool:
+        key = (table, column)
+        if key not in self._columns:
+            with self._cursor() as cur:
+                cur.execute("SELECT COL_LENGTH(?, ?)", (f"dbo.{table}", column))
+                self._columns[key] = cur.fetchone()[0] is not None
+        return self._columns[key]
+
     # ---- usuarios
     def _user_from_row(self, row) -> Optional[User]:
-        return User(row[0], row[1], row[2], row[3], row[4]) if row else None
+        return User(row[0], row[1], row[2], row[3], row[4] or "activo") if row else None
 
     def get_user(self, nombre_usuario: str, id_empresa: str) -> Optional[User]:
         with self._cursor() as cur:
@@ -63,7 +77,7 @@ class SqlServerSecurityRepository(SecurityRepository):
             cur.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN m.habilitado = 1 THEN 1 ELSE 0 END) "
                 "FROM dbo.usuarios u LEFT JOIN dbo.mfa_secrets m ON m.id_usuario = u.id "
-                "WHERE u.id_empresa = ? AND u.estado = 'activo'",
+                "WHERE u.id_empresa = ? AND COALESCE(u.estado, 'activo') = 'activo'",
                 (id_empresa,),
             )
             row = cur.fetchone()
@@ -85,7 +99,7 @@ class SqlServerSecurityRepository(SecurityRepository):
                 """
                 MERGE dbo.mfa_secrets AS target
                 USING (SELECT ? AS id_usuario) AS source ON target.id_usuario = source.id_usuario
-                WHEN MATCHED AND target.habilitado = 0 THEN
+                WHEN MATCHED AND COALESCE(target.habilitado, 0) = 0 THEN
                     UPDATE SET secret_totp = ?, ultimo_paso_totp = NULL, fecha_creacion = ?, fecha_confirmacion = NULL
                 WHEN NOT MATCHED THEN
                     INSERT (id_usuario, secret_totp, habilitado, fecha_creacion) VALUES (?, ?, 0, ?);
@@ -99,7 +113,7 @@ class SqlServerSecurityRepository(SecurityRepository):
                 "UPDATE dbo.mfa_secrets SET habilitado = 1, fecha_confirmacion = ? WHERE id_usuario = ?",
                 (now, id_usuario),
             )
-            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = 1, actualizado_en = ? WHERE id = ?", (now, id_usuario))
+            self._set_user_mfa_flag(cur, id_usuario, True, now)
 
     def disable_mfa(self, id_usuario: str, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
@@ -107,7 +121,15 @@ class SqlServerSecurityRepository(SecurityRepository):
                 "UPDATE dbo.mfa_secrets SET habilitado = 0, fecha_deshabilitacion = ? WHERE id_usuario = ?",
                 (now, id_usuario),
             )
-            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = 0, actualizado_en = ? WHERE id = ?", (now, id_usuario))
+            self._set_user_mfa_flag(cur, id_usuario, False, now)
+
+    def _set_user_mfa_flag(self, cur: pyodbc.Cursor, id_usuario: str, enabled: bool, now: datetime) -> None:
+        if not self._has_column("usuarios", "mfa_habilitado"):
+            return
+        if self._has_column("usuarios", "actualizado_en"):
+            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = ?, actualizado_en = ? WHERE id = ?", (enabled, now, id_usuario))
+        else:
+            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = ? WHERE id = ?", (enabled, id_usuario))
 
     def claim_totp_step(self, id_usuario: str, step: int) -> bool:
         with self._cursor(commit=True) as cur:
@@ -119,12 +141,32 @@ class SqlServerSecurityRepository(SecurityRepository):
             return cur.rowcount == 1
 
     # ---- fichas
+    def _insert_token(self, cur: pyodbc.Cursor, jti: str, id_usuario: str, kind: str, expira: datetime,
+                      revoked_at: Optional[datetime]) -> None:
+        columns = ["id", "id_usuario", "tipo_ficha", "expira_en", "revocada"]
+        values: list = [jti, id_usuario, kind, expira, revoked_at is not None]
+        if self._has_column("fichas_acceso", "ficha_hash"):
+            columns.append("ficha_hash")
+            values.append(_token_hash(jti, kind))
+        if revoked_at is not None and self._has_column("fichas_acceso", "revocada_en"):
+            columns.append("revocada_en")
+            values.append(revoked_at)
+        placeholders = ", ".join("?" for _ in columns)
+        cur.execute(
+            f"INSERT INTO dbo.fichas_acceso ({', '.join(columns)}) SELECT {placeholders} "
+            "WHERE NOT EXISTS (SELECT 1 FROM dbo.fichas_acceso WHERE id = ?)",
+            (*values, jti),
+        )
+
+    def _revocation_set(self) -> str:
+        return "revocada = 1, revocada_en = ?" if self._has_column("fichas_acceso", "revocada_en") else "revocada = 1"
+
+    def _revocation_params(self, now: datetime) -> tuple:
+        return (now,) if self._has_column("fichas_acceso", "revocada_en") else ()
+
     def store_refresh_token(self, jti: str, id_usuario: str, expira: datetime) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.fichas_acceso (id, id_usuario, tipo_ficha, ficha_hash, expira_en) VALUES (?, ?, 'Refresh', ?, ?)",
-                (jti, id_usuario, _token_hash(jti, "Refresh"), expira),
-            )
+            self._insert_token(cur, jti, id_usuario, "Refresh", expira, None)
 
     def get_refresh_token(self, jti: str) -> Optional[Tuple[str, bool]]:
         with self._cursor() as cur:
@@ -138,28 +180,24 @@ class SqlServerSecurityRepository(SecurityRepository):
     def revoke_refresh_token(self, jti: str, now: datetime) -> bool:
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE dbo.fichas_acceso SET revocada = 1, revocada_en = ? "
-                "WHERE id = ? AND tipo_ficha = 'Refresh' AND revocada = 0",
-                (now, jti),
+                f"UPDATE dbo.fichas_acceso SET {self._revocation_set()} "
+                "WHERE id = ? AND tipo_ficha = 'Refresh' AND COALESCE(revocada, 0) = 0",
+                (*self._revocation_params(now), jti),
             )
             return cur.rowcount == 1
 
     def revoke_all_refresh_tokens(self, id_usuario: str, now: datetime) -> int:
         with self._cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE dbo.fichas_acceso SET revocada = 1, revocada_en = ? "
-                "WHERE id_usuario = ? AND tipo_ficha = 'Refresh' AND revocada = 0",
-                (now, id_usuario),
+                f"UPDATE dbo.fichas_acceso SET {self._revocation_set()} "
+                "WHERE id_usuario = ? AND tipo_ficha = 'Refresh' AND COALESCE(revocada, 0) = 0",
+                (*self._revocation_params(now), id_usuario),
             )
             return cur.rowcount
 
     def revoke_access_token(self, jti: str, id_usuario: str, expira: datetime, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.fichas_acceso (id, id_usuario, tipo_ficha, ficha_hash, expira_en, revocada, revocada_en) "
-                "SELECT ?, ?, 'Bearer', ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM dbo.fichas_acceso WHERE id = ?)",
-                (jti, id_usuario, _token_hash(jti, "Bearer"), expira, now, jti),
-            )
+            self._insert_token(cur, jti, id_usuario, "Bearer", expira, now)
 
     def is_access_token_revoked(self, jti: str) -> bool:
         with self._cursor() as cur:
@@ -170,14 +208,18 @@ class SqlServerSecurityRepository(SecurityRepository):
             return cur.fetchone() is not None
 
     # ---- RBAC
+    def _active_role_filter(self, alias: str) -> str:
+        return f" AND COALESCE({alias}.estado, 'activo') = 'activo'" if self._has_column("roles", "estado") else ""
+
     def get_roles_and_permissions(self, id_usuario: str) -> Tuple[List[str], List[str]]:
+        expiry = " AND (ur.expira_en IS NULL OR ur.expira_en > GETUTCDATE())" if self._has_column("usuarios_roles", "expira_en") else ""
         with self._cursor() as cur:
             cur.execute(
                 "SELECT r.id, p.recurso, p.accion FROM dbo.usuarios_roles ur "
-                "JOIN dbo.roles r ON r.id = ur.id_rol AND r.estado = 'activo' "
+                f"JOIN dbo.roles r ON r.id = ur.id_rol{self._active_role_filter('r')} "
                 "LEFT JOIN dbo.roles_permisos rp ON rp.id_rol = r.id "
                 "LEFT JOIN dbo.permisos p ON p.id = rp.id_permiso "
-                "WHERE ur.id_usuario = ?",
+                f"WHERE ur.id_usuario = ?{expiry}",
                 (id_usuario,),
             )
             roles, permisos = set(), set()
@@ -189,7 +231,7 @@ class SqlServerSecurityRepository(SecurityRepository):
 
     def get_role_tenant(self, id_rol: str) -> Optional[str]:
         with self._cursor() as cur:
-            cur.execute("SELECT id_empresa FROM dbo.roles WHERE id = ? AND estado = 'activo'", (id_rol,))
+            cur.execute(f"SELECT id_empresa FROM dbo.roles r WHERE r.id = ?{self._active_role_filter('r')}", (id_rol,))
             row = cur.fetchone()
             return row[0] if row else None
 
