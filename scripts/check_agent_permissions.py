@@ -1,5 +1,6 @@
 """
-Muestra los permisos de Nexus, Matrix, Sentinel y Argus, a qué roles están asignados y qué ve cada usuario.
+Muestra los permisos de los agentes (Nexus, Matrix, Sentinel, Argus, Aurora, Vector, Prism, Orbit, Insight),
+a qué roles están asignados, qué ve cada usuario y si existen las tablas de la plataforma.
 Uso: venv\\Scripts\\python.exe scripts\\check_agent_permissions.py
 """
 
@@ -15,7 +16,10 @@ import pyodbc  # noqa: E402
 
 from src.agents.security_agent.config import load_sqlserver_settings  # noqa: E402
 
-AGENT_PERMISSIONS = "p.id LIKE 'perm_nexus_%' OR p.id LIKE 'perm_matrix_%' OR p.id LIKE 'perm_sentinel_%' OR p.id LIKE 'perm_argus_%'"
+AGENT_PREFIXES = ("nexus", "matrix", "sentinel", "argus", "aurora", "vector", "prism", "orbit", "insight")
+AGENT_PERMISSIONS = "(" + " OR ".join(f"p.id LIKE 'perm_{a}_%'" for a in AGENT_PREFIXES) + ")"
+PLATFORM_TABLES = ("aurora_sistemas", "aurora_componentes", "vector_analisis", "prism_ejecuciones", "orbit_despliegues",
+                   "insight_programaciones", "insight_reportes")
 
 
 def main() -> None:
@@ -43,6 +47,9 @@ def main() -> None:
             "SELECT name FROM sys.indexes WHERE name IN ('idx_auditoria_reglas_regla_fecha', 'idx_reglas_estado_prioridad') ORDER BY name"
         )
         print("indices ", [r[0] for r in cur.fetchall()])
+        cur.execute(f"SELECT name FROM sys.tables WHERE name IN ({', '.join('?' * len(PLATFORM_TABLES))}) ORDER BY name", PLATFORM_TABLES)
+        found = {r[0] for r in cur.fetchall()}
+        print("tablas  ", sorted(found), "faltan:", sorted(set(PLATFORM_TABLES) - found) or "ninguna")
     finally:
         conn.close()
 

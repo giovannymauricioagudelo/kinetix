@@ -46,42 +46,42 @@ INSIGHT = AgentProfile(
     "ReportingAgent",
     "El encargado de reflejar las métricas y reportes.",
     "reporting",
-    8,
+    15,
 )
 PRISM = AgentProfile(
     "Prism",
     "QAAgent",
     "El guardián que analiza y asegura la calidad.",
     "qa",
-    8,
+    10,
 )
 ORBIT = AgentProfile(
     "Orbit",
     "GitDeploymentAgent",
     "El que pone la aplicación en órbita (producción).",
     "git-deployment",
-    8,
+    11,
 )
 VECTOR = AgentProfile(
     "Vector",
     "DevelopmentAgent",
     "El taller principal donde se moldea el código.",
     "development",
-    8,
+    12,
 )
 GENESIS = AgentProfile(
     "Genesis",
     "CustomAIAgent",
     "Genera código y soluciones AI automáticamente.",
     "genesis",
-    7,
+    6,
 )
 AURORA = AgentProfile(
     "Aurora",
     "InterfaceDesignAgent",
     "Diseña sistemas UX/UI, componentes y accesibilidad multiplataforma.",
     "aurora",
-    10,
+    13,
 )
 CORTEX = AgentProfile(
     "Cortex",

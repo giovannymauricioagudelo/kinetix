@@ -438,6 +438,11 @@ class SecurityService:
             ],
         }
 
+    def audit_counts(self, actor: Principal, dias: int = 30) -> List[Tuple[str, str, int]]:
+        """Conteos (accion, resultado, total) de la bitácora de la empresa del actor."""
+        self.require(actor, PERM_READ_AUDIT)
+        return self._repo.audit_summary(actor.id_empresa, self._now() - timedelta(days=max(1, min(dias, 365))))
+
     def compliance_report(self, actor: Principal, dias: int = 30) -> Dict[str, object]:
         self.require(actor, PERM_READ_AUDIT)
         dias = max(1, min(dias, 365))

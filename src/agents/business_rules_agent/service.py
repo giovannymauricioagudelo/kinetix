@@ -158,6 +158,12 @@ class RulesService:
     def get_rule(self, rule_id: str) -> Dict[str, Any]:
         return rule_view(self._get(rule_id))
 
+    def active_rules(self, id_empresa: Optional[int] = None) -> List[BusinessRule]:
+        rules = self._repo.list_rules(status=RuleStatus.ACTIVE)
+        if id_empresa is None:
+            return rules
+        return [r for r in rules if r.scope != ScopeLevel.COMPANY or r.empresa_id == id_empresa]
+
     def create_rule(self, data: Dict[str, Any], actor: str) -> Dict[str, Any]:
         rule = self._parse(data.get("id_regla", ""), data)
         if not self._repo.create_rule(rule, actor, self._now()):
@@ -296,6 +302,10 @@ class RulesService:
                 for r in records
             ],
         }
+
+    def evaluation_records(self, id_regla: Optional[str] = None, dias: int = 30, limite: int = 10_000) -> List[EvaluationRecord]:
+        since = self._now() - timedelta(days=max(1, min(dias, 365)))
+        return self._repo.list_evaluations(id_regla, since, max(1, min(limite, 100_000)))
 
     def analytics(self, dias: int = 30) -> Dict[str, Any]:
         dias = max(1, min(dias, 365))

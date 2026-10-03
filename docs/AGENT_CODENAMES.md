@@ -51,6 +51,58 @@ Código: `src/agents/business_rules_agent/` · API: `/api/v1/matrix` (todo requi
 - **Pruebas sin efectos.** `POST /reglas/{id}/probar` corre escenarios con resultado esperado sin escribir auditoría.
 - **Seguimiento.** `GET /auditoria` y `GET /analitica` (evaluaciones, bloqueos, tasa de cumplimiento, tiempo promedio y reglas activas sin uso).
 
+## Agentes de plataforma: Aurora, Vector, Prism, Orbit e Insight
+
+Los cinco siguen el mismo patrón que Nexus y Matrix: todo requiere token de Sentinel salvo `GET /salud`, las escrituras quedan en `bitacora_auditoria`, persisten en SQL Server (`PLATFORM_AGENTS_SCHEMA.sql`: tablas, permisos y asignación a `rol_admin`/`rol_auditor`) y aceptan `<AGENTE>_REPOSITORY=memory` para desarrollo y pruebas. Vector, Prism y Orbit trabajan sobre el repositorio git de `KINETIX_REPO_PATH` (la raíz del proyecto por defecto).
+
+### Aurora: diseño UI/UX
+
+Código: `src/agents/interface_design_agent/` · API: `/api/v1/aurora` · Permisos: `diseno:ver`, `diseno:gestionar` · Tablas: `aurora_sistemas`, `aurora_componentes`.
+
+- **Sistemas de diseño por empresa** (`/sistemas`): paletas generadas (50–900) a partir de colores base, tipografía, espaciado, radios, sombras, breakpoints 320/768/1024 y temas claro/oscuro. Los tokens se versionan con control optimista (`PUT /sistemas/{id}/tokens` exige la versión leída; 409 si cambió).
+- **Accesibilidad WCAG 2.1.** `POST /contraste` calcula la relación de contraste; `POST /sistemas/{id}/accesibilidad` audita todos los pares texto/fondo del sistema y, con `aplicar`, corrige los colores hasta cumplir AA o AAA. Los componentes (`PUT /sistemas/{id}/componentes`) se revisan contra criterios como etiquetas (1.3.1), foco (2.4.3/2.4.7) y trampas de teclado (2.1.2).
+- **Exportación** (`GET /sistemas/{id}/exportar?formato=`): `css` (variables y `[data-theme="dark"]`), `scss`, `tailwind`, `json` (formato DTCG) y `android` (XML).
+- **Layouts y pantallas.** `POST /sistemas/{id}/layout` (`grid`, `sidebar`, `stack`, con media queries) y `POST /sistemas/{id}/pantallas` (`login`, `dashboard`, `list`, `form`): HTML semántico y accesible, con todo el texto escapado.
+
+### Vector: desarrollo
+
+Código: `src/agents/development_agent/` · API: `/api/v1/vector` · Permisos: `codigo:ver`, `codigo:escribir` · Tabla: `vector_analisis`.
+
+- **Análisis estático por AST** (`POST /analisis` sobre rutas del repositorio, `POST /analisis/codigo` sobre un fragmento): complejidad ciclomática, anidamiento, funciones largas o con muchos parámetros, `eval`/`exec`, `subprocess` con `shell=True`, SQL armado con f-strings, secretos en el código, `except` vacíos, peticiones HTTP sin timeout y docstrings faltantes. Devuelve una puntuación de 0 a 10; el historial queda en `GET /analisis`. Prism usa los hallazgos críticos en su compuerta.
+- **Git de solo lectura:** `GET /ramas`, `GET /commits`, `GET /diff`.
+- **Escritura controlada:** `POST /ramas` y `POST /commits` crean ramas `feature/`, `fix/`, `chore/` o `vector/` y commits con plumbing de git (sin checkout y sin tocar tu índice ni tu árbol de trabajo). `master` y `main` nunca se modifican; solo se escribe bajo `src`, `tests`, `scripts`, `docs` y `sql`; el mensaje termina con la marca `ddMMyyyy HH:MM:SS`.
+- **Plantillas** (`POST /plantillas/vista-previa` y `/plantillas/aplicar`): a partir de un módulo, una entidad y sus campos genera repositorio (memoria + SQL Server), servicio, dependencias, rutas con permisos de Sentinel, pruebas y el DDL con PK CLUSTERED, y lo commitea en una rama.
+
+### Prism: calidad
+
+Código: `src/agents/qa_agent/` · API: `/api/v1/prism` · Permisos: `calidad:ver`, `calidad:ejecutar` · Tabla: `prism_ejecuciones`.
+
+- **Pruebas reales.** `GET /pruebas` descubre las pruebas; `POST /ejecuciones` (202) lanza pytest en segundo plano, con cobertura opcional (JUnit + coverage JSON), una ejecución a la vez. `GET /ejecuciones` y `GET /ejecuciones/{id}` muestran el resultado, los fallos y los archivos con menos cobertura. Las ejecuciones que quedaron colgadas por un reinicio se marcan como `error` al arrancar.
+- **Análisis estático:** `POST /analisis-estatico` corre flake8 con la configuración `.flake8` del proyecto.
+- **Conflictos de reglas de Matrix:** `GET /reglas/conflictos` detecta reglas duplicadas, bloquear contra permitir, asignaciones contradictorias y cálculos sobrescritos entre reglas activas cuyos alcances y condiciones pueden coincidir.
+- **Compuerta de calidad** (`GET /compuerta?referencia=`): aprueba un commit solo si tiene una suite completa aprobada con cobertura ≥ `PRISM_COBERTURA_MINIMA` (80 por defecto), se ejecutó con el árbol limpio y Vector no reporta hallazgos críticos. Orbit la consulta antes de cada despliegue.
+- **Métricas:** `GET /metricas` (tasa de aprobación, cobertura actual, duración promedio y pruebas que más fallan).
+
+### Orbit: despliegues
+
+Código: `src/agents/git_deployment_agent/` · API: `/api/v1/orbit` · Permisos: `despliegues:ver`, `despliegues:ejecutar` · Tabla: `orbit_despliegues`.
+
+- **Release** (`POST /despliegues`, entornos `staging` y `produccion`): el commit debe pasar la compuerta de Prism y estar integrado en `ORBIT_RELEASE_BRANCH` (master); producción exige además un despliegue exitoso del mismo commit en staging. Se crea un tag anotado `release/<entorno>/<AAAAMMDD-HHMMSS>` cuyo mensaje termina con la marca `ddMMyyyy HH:MM:SS`. Con `publicar_tag` se empuja a `origin`; si el push falla, el tag local se borra y el despliegue queda `fallido`.
+- **Rechazos auditados:** si no se cumple una condición, el intento queda en el historial como `rechazado` y la API responde 409 con el detalle.
+- **Reversión** (`POST /despliegues/reversion`): vuelve a desplegar el commit de un despliegue exitoso anterior (el previo al actual, o el indicado) con un tag nuevo; exige motivo.
+- **Verificación:** `GET /despliegues/verificacion` comprueba que los tags de lo desplegado existan y apunten al commit registrado, y consulta el estado de GitHub.
+- **GitHub Actions** (con `GITHUB_TOKEN`): `lanzar_workflow` dispara `ORBIT_GITHUB_WORKFLOW` sobre el tag publicado; `GET /github/workflows` y `GET /github/estado/{referencia}` muestran las ejecuciones y los checks.
+
+### Insight: reportes
+
+Código: `src/agents/reporting_agent/` · API: `/api/v1/insight` · Permisos: `reportes:ver`, `reportes:generar`, `reportes:programar` · Tablas: `insight_reportes`, `insight_programaciones`.
+
+- **Catálogo cerrado** (`GET /catalogo`), nunca SQL libre: evaluaciones y estado de reglas (Matrix), auditoría de seguridad y accesos de usuarios (Sentinel, solo tu empresa y con `auditoria:ver`), rendimiento y disponibilidad (Argus), calidad de pruebas (Prism), despliegues (Orbit) y análisis de código (Vector). Los parámetros se validan contra el catálogo.
+- **Generar y exportar:** `POST /reportes/generar` (con `guardar` queda en el historial de la empresa) y `POST /reportes/exportar?formato=csv|json`. El CSV lleva BOM para Excel y neutraliza celdas que empiezan con `=`, `+`, `-` o `@` (inyección de fórmulas).
+- **Reportes guardados por empresa:** listar, ver, exportar y borrar; se purgan tras `INSIGHT_RETENCION_DIAS`.
+- **Programaciones** diarias, semanales o mensuales a una hora UTC. Corren cada `INSIGHT_SCHEDULER_INTERVAL_SECONDS` con la identidad de quien las creó y vuelven a verificar `reportes:programar`; si se le retiró el permiso, la ejecución queda en error. Con varias instancias, cada ejecución se reclama de forma atómica para no duplicarse.
+- **KPIs** (`GET /kpis`): resumen de reglas, API, calidad, despliegues y código. Si un agente no responde, su sección aparece como no disponible y el resto se entrega igual.
+
 ## Sentinel: seguridad
 
 Código: `src/agents/security_agent/` · API: `/api/v1/sentinel` · Esquema: `SENTINEL_SCHEMA_SPANISH.sql` + `SENTINEL_SCHEMA_PHASE2.sql`.

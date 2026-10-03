@@ -56,14 +56,15 @@ Si no activas el venv y existe `venv/` en la raíz, `run.py` intenta usarlo solo
 - ReDoc: http://localhost:8000/redoc
 - Health: http://localhost:8000/health
 
-Sentinel, Nexus y Matrix usan SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez las migraciones incrementales (idempotentes):
+Sentinel, Nexus, Matrix, Aurora, Vector, Prism, Orbit e Insight usan SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez las migraciones incrementales (idempotentes); el script lee las credenciales de `.env`:
 
 ```powershell
-sqlcmd -S localhost -U sa -C -i SENTINEL_SCHEMA_PHASE2.sql
-sqlcmd -S localhost -U sa -C -i NEXUS_MATRIX_SCHEMA.sql
+venv\Scripts\python.exe scripts\apply_sql_migration.py SENTINEL_SCHEMA_PHASE2.sql
+venv\Scripts\python.exe scripts\apply_sql_migration.py NEXUS_MATRIX_SCHEMA.sql
+venv\Scripts\python.exe scripts\apply_sql_migration.py PLATFORM_AGENTS_SCHEMA.sql
 ```
 
-Sin SQL Server, `SENTINEL_REPOSITORY=memory`, `NEXUS_CATALOG=memory` y `MATRIX_REPOSITORY=memory` arrancan con datos en memoria (solo desarrollo). Para comprobar Nexus y Matrix contra la base sin dejar cambios: `venv\Scripts\python.exe scripts\verify_nexus_matrix_sqlserver.py`.
+Sin SQL Server, cada agente acepta su variable en `memory` (`SENTINEL_REPOSITORY`, `NEXUS_CATALOG`, `MATRIX_REPOSITORY`, `AURORA_REPOSITORY`, `VECTOR_REPOSITORY`, `PRISM_REPOSITORY`, `ORBIT_REPOSITORY`, `INSIGHT_REPOSITORY`) y arranca con datos en memoria (solo desarrollo). Para comprobar Nexus y Matrix contra la base sin dejar cambios: `venv\Scripts\python.exe scripts\verify_nexus_matrix_sqlserver.py`; para ver permisos, roles y tablas de los agentes: `venv\Scripts\python.exe scripts\check_agent_permissions.py`.
 
 Solo runtime (sin tests):
 
@@ -85,6 +86,11 @@ src/agents/agent_catalog.py  Codenames (Nexus, Synapse, …)
 src/agents/database_agent/   Nexus (DatabaseAgent)
 src/agents/apis_agent/       Synapse (APIsAgent)
 src/agents/business_rules_agent/  Matrix (BusinessRulesAgent)
+src/agents/reporting_agent/  Insight (ReportingAgent)
+src/agents/qa_agent/         Prism (QAAgent)
+src/agents/git_deployment_agent/  Orbit (GitDeploymentAgent)
+src/agents/development_agent/  Vector (DevelopmentAgent)
+src/agents/interface_design_agent/  Aurora (InterfaceDesignAgent)
 src/agents/custom_ai_agent/  Genesis (CustomAIAgent)
 src/agents/orchestrator_agent/  Cortex (OrchestratorAgent)
 src/agents/security_agent/   Sentinel (SecurityAgent)
