@@ -1,24 +1,35 @@
 """
-KINETIX STUDIO v5.0.0 - COMPLETE ENTERPRISE API WITH 9 AGENTS
-All 9 Agents (NEXUS + SYNAPSE + MATRIX + INSIGHT + PRISM + ORBIT + VECTOR + GENESIS + AURORA)
-Total: 66 endpoints fully integrated
+KINETIX STUDIO v5.0.0 - COMPLETE ENTERPRISE API WITH 12 AGENTS
+All 12 Agents (NEXUS + SYNAPSE + MATRIX + INSIGHT + PRISM + ORBIT + VECTOR + GENESIS + AURORA + CORTEX + SENTINEL + ARGUS)
+Total: 100 endpoints fully integrated
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, Query, APIRouter
+from fastapi import FastAPI, Query, APIRouter, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
 import re
 
+from src.agents.monitoring_agent import install_argus
+from src.agents.security_agent.dependencies import require_user
+from src.api.routes.argus_routes import router as argus
+from src.api.routes.cortex_routes import router as cortex
+from src.api.routes.sentinel_routes import router as sentinel
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="KINETIX STUDIO v5.0.0", description="9 Autonomous Agents - 66 Endpoints", version="5.0.0")
+app = FastAPI(title="KINETIX STUDIO v5.0.0", description="12 Autonomous Agents - 100 Endpoints", version="5.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+install_argus(app)
+
+# KINETIX_REQUIRE_AUTH=true exige un token de Sentinel en los agentes legacy y en Cortex.
+_legacy_auth = [Depends(require_user)] if os.getenv("KINETIX_REQUIRE_AUTH", "false").strip().lower() in ("1", "true", "si", "sí") else []
 
 # ============================================================================
 # AGENT 1: NEXUS (DatabaseAgent) - 7 Endpoints
@@ -48,7 +59,7 @@ async def test_injection(table_name: str = Query(...), malicious_input: str = Qu
 @nexus.get("/procedure-definition")
 async def get_definition(procedure_name: str = Query(...), database: str = Query("mssql")):
     return {"status": "success", "definition": f"CREATE PROCEDURE [{procedure_name}]..."} if re.match(r'^sp_', procedure_name) else {"status": "error"}
-app.include_router(nexus)
+app.include_router(nexus, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 2: SYNAPSE (APIsAgent) - 6 Endpoints
@@ -79,7 +90,7 @@ async def get_logs(api_name: Optional[str] = Query(None), limit: int = Query(10)
 @synapse.get("/api-health")
 async def api_health():
     return {"status": "completed", "total_apis": 4, "healthy": 2, "apis": [{"api_name": "github_api", "status": "healthy", "uptime_percent": 99.95}]}
-app.include_router(synapse)
+app.include_router(synapse, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 3: MATRIX (BusinessRulesAgent) - 8 Endpoints
@@ -113,7 +124,7 @@ async def audit_decision(rule_id: str = Query(...), data_id: str = Query(...), d
 @matrix.get("/analytics")
 async def analytics(rule_id: Optional[str] = Query(None), time_period: str = Query("24h")):
     return {"status": "success", "time_period": time_period, "total_rules_analyzed": 3, "average_success_rate": "99.2%"}
-app.include_router(matrix)
+app.include_router(matrix, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 4: INSIGHT (ReportingAgent) - 8 Endpoints
@@ -151,7 +162,7 @@ async def custom_query(sql: str = Query(...), timeout_seconds: int = Query(30)):
 @insight.get("/analytics")
 async def insight_analytics(period: str = Query("7d"), metric: Optional[str] = Query(None)):
     return {"status": "success", "period": period, "reports_generated": 42, "avg_generation_time_ms": 312.5, "total_size_gb": 8.2}
-app.include_router(insight)
+app.include_router(insight, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 5: PRISM (QAAgent) - 8 Endpoints
@@ -194,7 +205,7 @@ async def perf_test(endpoint: str = Query(...), requests_per_second: int = Query
 @prism.get("/quality-metrics")
 async def quality_metrics(period: str = Query("7d")):
     return {"status": "success", "period": period, "total_tests": 127, "pass_rate": 96.8, "avg_execution_time_ms": 234.5}
-app.include_router(prism)
+app.include_router(prism, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 6: ORBIT (GitDeploymentAgent) - 8 Endpoints
@@ -230,7 +241,7 @@ async def cicd_status(repository_id: Optional[str] = Query(None)):
 @orbit.get("/deployment-logs")
 async def deploy_logs(deployment_id: str = Query(...), limit: int = Query(100)):
     return {"status": "success", "deployment_id": deployment_id, "log_entries": 45, "logs": [{"timestamp": "2026-09-28T10:30:01Z", "level": "INFO", "message": "Deployment started"}]}
-app.include_router(orbit)
+app.include_router(orbit, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 7: VECTOR (DevelopmentAgent) - 8 Endpoints
@@ -270,7 +281,7 @@ async def generate_tests(code_id: str = Query(...), coverage_target: int = Query
     if coverage_target < 50 or coverage_target > 100:
         return {"status": "error"}
     return {"status": "success", "test_id": f"test_{code_id}_123", "tests_generated": 12, "coverage_target": coverage_target}
-app.include_router(vector)
+app.include_router(vector, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 8: GENESIS (CustomAIAgent) - 6 Endpoints
@@ -302,7 +313,7 @@ async def customize_behavior(agent_id: str = Query(...), parameter: str = Query(
     if not agent_id.startswith("agent_"):
         return {"status": "error"}
     return {"status": "success", "customization_id": f"custom_{agent_id}_123", "parameter": parameter, "updated": True}
-app.include_router(genesis)
+app.include_router(genesis, dependencies=_legacy_auth)
 
 # ============================================================================
 # AGENT 9: AURORA (InterfaceDesignAgent) - 10 Endpoints ✨ NEW
@@ -354,14 +365,29 @@ async def design_analytics(system_id: str = Query(...), period: str = Query("30d
     if not system_id.startswith("sys_"):
         return {"status": "error"}
     return {"status": "success", "period": period, "apps_using_system": 12, "component_reuse_rate": 87.5, "wcag_compliance": 98.5, "avg_load_time_ms": 145}
-app.include_router(aurora)
+app.include_router(aurora, dependencies=_legacy_auth)
+
+# ============================================================================
+# AGENT 10: CORTEX (OrchestratorAgent) - 6 Endpoints
+# ============================================================================
+app.include_router(cortex, dependencies=_legacy_auth)
+
+# ============================================================================
+# AGENT 11: SENTINEL (SecurityAgent) - 16 Endpoints
+# ============================================================================
+app.include_router(sentinel)
+
+# ============================================================================
+# AGENT 12: ARGUS (MonitoringAgent) - 12 Endpoints
+# ============================================================================
+app.include_router(argus)
 
 # ============================================================================
 # INFRASTRUCTURE ENDPOINTS (9 total)
 # ============================================================================
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "healthy", "version": "5.0.0", "agents": 9, "endpoints": 66, "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "version": "5.0.0", "agents": 12, "endpoints": 100, "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/ready", tags=["Health"])
 async def ready():
@@ -385,11 +411,11 @@ async def metrics_cb():
 
 @app.get("/metrics/all", tags=["Metrics"])
 async def metrics_all():
-    return {"timestamp": datetime.utcnow().isoformat(), "version": "5.0.0", "agents": 9, "endpoints": 66}
+    return {"timestamp": datetime.utcnow().isoformat(), "version": "5.0.0", "agents": 12, "endpoints": 100}
 
 @app.get("/system/info", tags=["System"])
 async def system_info():
-    return {"app": "KINETIX STUDIO", "version": "5.0.0", "agents": 9, "endpoints": 66}
+    return {"app": "KINETIX STUDIO", "version": "5.0.0", "agents": 12, "endpoints": 100}
 
 @app.get("/agents", tags=["Agents"])
 async def list_agents():
@@ -402,13 +428,16 @@ async def list_agents():
         {"id": "orbit", "name": "GitDeploymentAgent", "endpoints": 8, "status": "ready"},
         {"id": "vector", "name": "DevelopmentAgent", "endpoints": 8, "status": "ready"},
         {"id": "genesis", "name": "CustomAIAgent", "endpoints": 6, "status": "ready"},
-        {"id": "aurora", "name": "InterfaceDesignAgent", "endpoints": 10, "status": "ready"}
+        {"id": "aurora", "name": "InterfaceDesignAgent", "endpoints": 10, "status": "ready"},
+        {"id": "cortex", "name": "OrchestratorAgent", "endpoints": 6, "status": "ready"},
+        {"id": "sentinel", "name": "SecurityAgent", "endpoints": 16, "status": "ready"},
+        {"id": "argus", "name": "MonitoringAgent", "endpoints": 12, "status": "ready"}
     ]
-    return {"total": 9, "active": 9, "agents": agents, "timestamp": datetime.utcnow().isoformat()}
+    return {"total": 12, "active": 12, "agents": agents, "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/")
 async def root():
-    return {"app": "KINETIX STUDIO v5.0.0", "description": "9 Autonomous Agents - 66 Endpoints", "documentation": "http://127.0.0.1:8000/docs", "status": "running", "agents": 9, "endpoints": 66, "timestamp": datetime.utcnow().isoformat()}
+    return {"app": "KINETIX STUDIO v5.0.0", "description": "12 Autonomous Agents - 100 Endpoints", "documentation": "http://127.0.0.1:8000/docs", "status": "running", "agents": 12, "endpoints": 100, "timestamp": datetime.utcnow().isoformat()}
 
 if __name__ == "__main__":
     uvicorn.run("src.api.main_scalable:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

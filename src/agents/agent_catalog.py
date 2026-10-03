@@ -83,6 +83,27 @@ AURORA = AgentProfile(
     "aurora",
     10,
 )
+CORTEX = AgentProfile(
+    "Cortex",
+    "OrchestratorAgent",
+    "El cerebro que interpreta cada solicitud, pregunta lo necesario y coordina a los demás agentes.",
+    "cortex",
+    6,
+)
+SENTINEL = AgentProfile(
+    "Sentinel",
+    "SecurityAgent",
+    "El guardián que autentica, autoriza y audita cada acceso.",
+    "sentinel",
+    16,
+)
+ARGUS = AgentProfile(
+    "Argus",
+    "MonitoringAgent",
+    "El vigilante de los cien ojos que mide, alerta y reporta la salud de la plataforma.",
+    "argus",
+    12,
+)
 
 ALL_AGENTS: Tuple[AgentProfile, ...] = (
     NEXUS,
@@ -94,6 +115,9 @@ ALL_AGENTS: Tuple[AgentProfile, ...] = (
     VECTOR,
     GENESIS,
     AURORA,
+    CORTEX,
+    SENTINEL,
+    ARGUS,
 )
 
 BY_LEGACY: Dict[str, AgentProfile] = {p.legacy_id: p for p in ALL_AGENTS}

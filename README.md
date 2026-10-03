@@ -1,6 +1,6 @@
 # Kinetix Studio
 
-Plataforma AFP con agentes **Nexus**, **Synapse**, **Matrix**, **Insight**, **Prism**, **Orbit**, **Vector** y **Genesis** (ver [docs/AGENT_CODENAMES.md](docs/AGENT_CODENAMES.md)), expuestos por FastAPI.
+Plataforma AFP con agentes **Nexus**, **Synapse**, **Matrix**, **Insight**, **Prism**, **Orbit**, **Vector**, **Genesis**, **Aurora**, **Cortex**, **Sentinel** y **Argus** (ver [docs/AGENT_CODENAMES.md](docs/AGENT_CODENAMES.md)), expuestos por FastAPI.
 
 ## Requisitos
 
@@ -56,6 +56,14 @@ Si no activas el venv y existe `venv/` en la raíz, `run.py` intenta usarlo solo
 - ReDoc: http://localhost:8000/redoc
 - Health: http://localhost:8000/health
 
+Sentinel usa SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez la migración incremental:
+
+```powershell
+sqlcmd -S localhost -U sa -C -i SENTINEL_SCHEMA_PHASE2.sql
+```
+
+Sin SQL Server, `SENTINEL_REPOSITORY=memory` arranca Sentinel con datos en memoria (solo desarrollo).
+
 Solo runtime (sin tests):
 
 ```bash
@@ -77,6 +85,9 @@ src/agents/database_agent/   Nexus (DatabaseAgent)
 src/agents/apis_agent/       Synapse (APIsAgent)
 src/agents/business_rules_agent/  Matrix (BusinessRulesAgent)
 src/agents/custom_ai_agent/  Genesis (CustomAIAgent)
+src/agents/orchestrator_agent/  Cortex (OrchestratorAgent)
+src/agents/security_agent/   Sentinel (SecurityAgent)
+src/agents/monitoring_agent/ Argus (MonitoringAgent)
 src/api/main.py              App FastAPI
 src/api/routes/              Rutas REST por agente
 tests/unit/                  Pruebas

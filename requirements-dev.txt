@@ -1,5 +1,6 @@
 # AFP Development Dependencies
 # Instalar con: pip install -r requirements-dev.txt
+-r requirements.txt
 
 # Core FastAPI
 fastapi==0.104.1

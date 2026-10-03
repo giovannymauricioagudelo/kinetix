@@ -25,10 +25,13 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from collections import defaultdict
+from dotenv import load_dotenv
 
 # ================================================================================
 # CONFIG
 # ================================================================================
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 DB_CONFIG = {
     "Driver": "{ODBC Driver 18 for SQL Server}",
