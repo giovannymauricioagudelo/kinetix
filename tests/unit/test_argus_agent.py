@@ -20,8 +20,8 @@ def build_app() -> FastAPI:
     app = FastAPI()
     nexus = APIRouter(prefix="/api/v1/nexus")
 
-    @nexus.get("/info")
-    async def nexus_info():
+    @nexus.get("/salud")
+    async def nexus_health():
         return {"id": "nexus"}
 
     @nexus.get("/items/{item_id}")
@@ -34,8 +34,8 @@ def build_app() -> FastAPI:
 
     matrix = APIRouter(prefix="/api/v1/matrix")
 
-    @matrix.get("/info")
-    async def matrix_info():
+    @matrix.get("/salud")
+    async def matrix_health():
         raise HTTPException(500, "caído")
 
     app.include_router(nexus)

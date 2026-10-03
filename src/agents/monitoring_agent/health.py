@@ -11,7 +11,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 import httpx
 
-from src.agents.agent_catalog import ALL_AGENTS, ARGUS, SENTINEL, AgentProfile
+from src.agents.agent_catalog import ALL_AGENTS, ARGUS, MATRIX, NEXUS, SENTINEL, AgentProfile
 from src.agents.monitoring_agent.collector import MetricsCollector
 from src.agents.monitoring_agent.middleware import PROBE_HEADER, PROBE_TOKEN
 
@@ -20,7 +20,7 @@ SLOW = "lento"
 DOWN = "caido"
 NOT_DEPLOYED = "no_desplegado"
 
-_PROBE_SUFFIX = {SENTINEL.codename: "/salud", ARGUS.codename: "/salud"}
+_PROBE_SUFFIX = {p.codename: "/salud" for p in (NEXUS, MATRIX, SENTINEL, ARGUS)}
 
 
 def probe_path(profile: AgentProfile) -> str:

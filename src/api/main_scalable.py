@@ -1,7 +1,7 @@
 """
 KINETIX STUDIO v5.0.0 - COMPLETE ENTERPRISE API
 All 11 Agents (NEXUS + SYNAPSE + MATRIX + INSIGHT + PRISM + ORBIT + VECTOR + GENESIS + CORTEX + SENTINEL + ARGUS)
-Total: 92 endpoints fully integrated
+Total: 100 endpoints fully integrated
 """
 
 import logging
@@ -18,12 +18,14 @@ from src.agents.monitoring_agent import install_argus
 from src.agents.security_agent.dependencies import require_user
 from src.api.routes.argus_routes import router as argus
 from src.api.routes.cortex_routes import router as cortex
+from src.api.routes.matrix_routes import router as matrix
+from src.api.routes.nexus_routes import router as nexus
 from src.api.routes.sentinel_routes import router as sentinel
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="KINETIX STUDIO v5.0.0", description="11 Autonomous Agents - 92 Endpoints", version="5.0.0")
+app = FastAPI(title="KINETIX STUDIO v5.0.0", description="11 Autonomous Agents - 100 Endpoints", version="5.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 install_argus(app)
@@ -32,34 +34,9 @@ install_argus(app)
 _legacy_auth = [Depends(require_user)] if os.getenv("KINETIX_REQUIRE_AUTH", "false").strip().lower() in ("1", "true", "si", "sí") else []
 
 # ============================================================================
-# AGENT 1: NEXUS (DatabaseAgent) - 7 Endpoints
+# AGENT 1: NEXUS (DatabaseAgent) - 11 Endpoints (SQL Server real, permisos de Sentinel)
 # ============================================================================
-nexus = APIRouter(prefix="/api/v1/nexus", tags=["NEXUS"])
-@nexus.get("/info")
-async def nexus_info():
-    return {"id": "nexus", "name": "DatabaseAgent v2.0", "endpoints": 7, "status": "active", "timestamp": datetime.utcnow().isoformat()}
-@nexus.post("/create-stored-procedure")
-async def create_sp(table_name: str = Query(...), operation: str = Query(...), columns: Optional[str] = Query(None)):
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name) or operation.upper() not in ["SELECT","INSERT","UPDATE","DELETE"]:
-        return {"status": "error"}
-    return {"status": "success", "procedure_name": f"sp_{operation.upper()}_{table_name}", "timestamp": datetime.utcnow().isoformat()}
-@nexus.post("/execute-stored-procedure")
-async def execute_sp(procedure_name: str = Query(...), database: str = Query("mssql")):
-    return {"status": "success", "rows_affected": 0, "execution_time_ms": 45.23} if re.match(r'^sp_', procedure_name) else {"status": "error"}
-@nexus.post("/crud")
-async def crud(table_name: str = Query(...), operation: str = Query(...), data: Optional[str] = Query(None)):
-    return {"status": "success", "operation": operation.upper(), "affected_rows": 1} if re.match(r'^[a-zA-Z_]', table_name) else {"status": "error"}
-@nexus.get("/stored-procedures")
-async def list_sp(database: str = Query("mssql")):
-    return {"status": "success", "total": 4, "procedures": [{"name": f"sp_SELECT_users", "type": "SELECT"}]}
-@nexus.post("/test-sql-injection")
-async def test_injection(table_name: str = Query(...), malicious_input: str = Query(...)):
-    is_safe = bool(re.match(r'^[a-zA-Z_]', table_name)) and not any(p in malicious_input.upper() for p in [";","--","DROP","DELETE","UNION"])
-    return {"status": "completed", "input_safe": is_safe, "security_score": 100 if is_safe else 70}
-@nexus.get("/procedure-definition")
-async def get_definition(procedure_name: str = Query(...), database: str = Query("mssql")):
-    return {"status": "success", "definition": f"CREATE PROCEDURE [{procedure_name}]..."} if re.match(r'^sp_', procedure_name) else {"status": "error"}
-app.include_router(nexus, dependencies=_legacy_auth)
+app.include_router(nexus)
 
 # ============================================================================
 # AGENT 2: SYNAPSE (APIsAgent) - 6 Endpoints
@@ -93,38 +70,9 @@ async def api_health():
 app.include_router(synapse, dependencies=_legacy_auth)
 
 # ============================================================================
-# AGENT 3: MATRIX (BusinessRulesAgent) - 8 Endpoints
+# AGENT 3: MATRIX (BusinessRulesAgent) - 12 Endpoints (reglas en SQL Server, permisos de Sentinel)
 # ============================================================================
-matrix = APIRouter(prefix="/api/v1/matrix", tags=["MATRIX"])
-@matrix.get("/info")
-async def matrix_info():
-    return {"id": "matrix", "name": "BusinessRulesAgent v2.0", "endpoints": 8, "status": "active", "rule_types": ["simple", "compound", "conditional", "temporal"]}
-@matrix.post("/create-rule")
-async def create_rule(rule_name: str = Query(...), rule_type: str = Query(...), condition: str = Query(...), action: str = Query(...)):
-    if not re.match(r'^[a-zA-Z_]', rule_name) or rule_type not in ["simple","compound","conditional","temporal"] or len(condition)<5 or len(action)<5:
-        return {"status": "error"}
-    return {"status": "success", "rule_id": f"rule_{rule_name}_123", "rule_type": rule_type}
-@matrix.post("/validate-rule")
-async def validate_rule(rule_id: str = Query(...), test_data: Optional[str] = Query(None)):
-    return {"status": "success", "is_valid": True, "validation_checks": {"syntax_valid": True}} if re.match(r'^rule_', rule_id) else {"status": "error"}
-@matrix.post("/apply-rule")
-async def apply_rule(rule_id: str = Query(...), data: str = Query(...), context: Optional[str] = Query(None)):
-    return {"status": "success", "conditions_met": True, "action_executed": True} if re.match(r'^rule_', rule_id) else {"status": "error"}
-@matrix.get("/rules")
-async def list_rules(rule_type: Optional[str] = Query(None), enabled_only: bool = Query(True), limit: int = Query(50)):
-    return {"status": "success", "total": 4, "rules": [{"rule_id": "rule_discount_1", "rule_type": "simple", "enabled": True}]}
-@matrix.post("/test-rule")
-async def test_rule(rule_id: str = Query(...), test_scenarios: Optional[str] = Query(None)):
-    return {"status": "completed", "total_scenarios": 5, "passed": 5, "success_rate": "100.0%"} if re.match(r'^rule_', rule_id) else {"status": "error"}
-@matrix.post("/audit-decision")
-async def audit_decision(rule_id: str = Query(...), data_id: str = Query(...), decision: str = Query(...), reason: Optional[str] = Query(None)):
-    if not re.match(r'^rule_', rule_id) or decision not in ["accepted","rejected","escalated","manual_review"]:
-        return {"status": "error"}
-    return {"status": "success", "audit_id": f"audit_{rule_id}_{data_id}", "decision": decision}
-@matrix.get("/analytics")
-async def analytics(rule_id: Optional[str] = Query(None), time_period: str = Query("24h")):
-    return {"status": "success", "time_period": time_period, "total_rules_analyzed": 3, "average_success_rate": "99.2%"}
-app.include_router(matrix, dependencies=_legacy_auth)
+app.include_router(matrix)
 
 # ============================================================================
 # AGENT 4: INSIGHT (ReportingAgent) - 8 Endpoints
@@ -359,18 +307,18 @@ async def metrics_cb():
 
 @app.get("/metrics/all", tags=["Metrics"])
 async def metrics_all():
-    return {"timestamp": datetime.utcnow().isoformat(), "version": "5.0.0", "endpoints": {"total": 92, "agents": 11, "infrastructure": 9}}
+    return {"timestamp": datetime.utcnow().isoformat(), "version": "5.0.0", "endpoints": {"total": 100, "agents": 11, "infrastructure": 9}}
 
 @app.get("/system/info", tags=["System"])
 async def system_info():
-    return {"app": "KINETIX STUDIO", "version": "5.0.0", "agents": 11, "endpoints": 92}
+    return {"app": "KINETIX STUDIO", "version": "5.0.0", "agents": 11, "endpoints": 100}
 
 @app.get("/agents", tags=["Agents"])
 async def list_agents():
     agents = [
-        {"id": "nexus", "name": "DatabaseAgent", "endpoints": 7, "status": "ready"},
+        {"id": "nexus", "name": "DatabaseAgent", "endpoints": 11, "status": "ready"},
         {"id": "synapse", "name": "APIsAgent", "endpoints": 6, "status": "ready"},
-        {"id": "matrix", "name": "BusinessRulesAgent", "endpoints": 8, "status": "ready"},
+        {"id": "matrix", "name": "BusinessRulesAgent", "endpoints": 12, "status": "ready"},
         {"id": "insight", "name": "ReportingAgent", "endpoints": 8, "status": "ready"},
         {"id": "prism", "name": "QAAgent", "endpoints": 8, "status": "ready"},
         {"id": "orbit", "name": "GitDeploymentAgent", "endpoints": 8, "status": "ready"},
@@ -384,7 +332,7 @@ async def list_agents():
 
 @app.get("/")
 async def root():
-    return {"app": "KINETIX STUDIO v5.0.0", "description": "11 Autonomous Agents - 92 Endpoints", "documentation": "http://127.0.0.1:8000/docs", "status": "running", "timestamp": datetime.utcnow().isoformat()}
+    return {"app": "KINETIX STUDIO v5.0.0", "description": "11 Autonomous Agents - 100 Endpoints", "documentation": "http://127.0.0.1:8000/docs", "status": "running", "timestamp": datetime.utcnow().isoformat()}
 
 if __name__ == "__main__":
     uvicorn.run("src.api.main_scalable:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

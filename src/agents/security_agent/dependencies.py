@@ -58,7 +58,7 @@ def set_security_service(service: Optional[SecurityService]) -> None:
 
 
 @contextmanager
-def translate_errors() -> Iterator[None]:
+def translate_errors(unavailable: str = "Servicio de seguridad no disponible temporalmente") -> Iterator[None]:
     try:
         yield
     except HTTPException:
@@ -76,8 +76,8 @@ def translate_errors() -> Iterator[None]:
     except InvalidInputError as e:
         raise HTTPException(400, str(e))
     except Exception:
-        logger.exception("Sentinel: error interno")
-        raise HTTPException(503, "Servicio de seguridad no disponible temporalmente")
+        logger.exception("Error interno: %s", unavailable)
+        raise HTTPException(503, unavailable)
 
 
 def require_user(

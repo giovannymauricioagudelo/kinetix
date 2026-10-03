@@ -25,7 +25,7 @@ NEXUS = AgentProfile(
     "DatabaseAgent",
     "El núcleo de conexión de datos.",
     "database",
-    6,
+    11,
 )
 SYNAPSE = AgentProfile(
     "Synapse",
@@ -39,7 +39,7 @@ MATRIX = AgentProfile(
     "BusinessRulesAgent",
     "El motor que procesa las reglas del negocio.",
     "rules",
-    8,
+    12,
 )
 INSIGHT = AgentProfile(
     "Insight",

@@ -5,6 +5,7 @@ Handles: Schema creation/updates, migrations, audit logging, backups
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 from enum import Enum
@@ -16,6 +17,20 @@ from src.agents.agent_catalog import NEXUS
 from src.agents.base_agent import BaseAgent, AgentConfig, AgentInput, AgentOutput, AgentStatus
 
 logger = logging.getLogger(__name__)
+
+IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,99}$")
+SQL_FUNCTION_DEFAULTS = {"NULL", "GETDATE()", "GETUTCDATE()", "SYSDATETIME()", "SYSUTCDATETIME()", "NEWID()", "CURRENT_TIMESTAMP"}
+
+
+def quote_identifier(name: str) -> str:
+    """Nombre entre corchetes; solo acepta identificadores simples (letras, números y '_')."""
+    if not IDENTIFIER.match(name or ""):
+        raise ValueError(f"Identificador inválido: {name!r}")
+    return f"[{name}]"
+
+
+def sql_string(value: str) -> str:
+    return "N'" + value.replace("'", "''") + "'"
 
 
 # ============================================================================
@@ -55,10 +70,43 @@ class ColumnDefinition(BaseModel):
         return v
 
 
+SQLSERVER_TYPES = {
+    ColumnType.VARCHAR: "NVARCHAR(255)",
+    ColumnType.INT: "INT",
+    ColumnType.BIGINT: "BIGINT",
+    ColumnType.DECIMAL: "DECIMAL(18,2)",
+    ColumnType.BOOLEAN: "BIT",
+    ColumnType.DATETIME: "DATETIME2",
+    ColumnType.TEXT: "NVARCHAR(MAX)",
+    ColumnType.JSON: "NVARCHAR(MAX)",
+}
+NUMERIC_TYPES = {ColumnType.INT, ColumnType.BIGINT, ColumnType.DECIMAL}
+UNINDEXABLE_TYPES = {ColumnType.TEXT, ColumnType.JSON}
+
+
+def default_literal(column: ColumnDefinition) -> str:
+    """Traduce el default a un literal T-SQL seguro; lanza ValueError si no es válido para el tipo."""
+    raw = column.default.strip()
+    if raw.upper() in SQL_FUNCTION_DEFAULTS:
+        return raw.upper()
+    if column.type == ColumnType.BOOLEAN:
+        mapping = {"true": "1", "1": "1", "false": "0", "0": "0"}
+        if raw.lower() not in mapping:
+            raise ValueError(f"Default inválido para BOOLEAN en {column.name}: {raw}")
+        return mapping[raw.lower()]
+    if column.type in NUMERIC_TYPES:
+        if not re.fullmatch(r"-?\d+(\.\d+)?", raw):
+            raise ValueError(f"Default numérico inválido en {column.name}: {raw}")
+        return raw
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        raw = raw[1:-1]
+    return sql_string(raw)
+
+
 class TableDefinition(BaseModel):
     """Complete table definition"""
     name: str = Field(..., min_length=1, max_length=100)
-    schema: str = "public"
+    schema: str = "dbo"
     columns: List[ColumnDefinition]
     company_column: bool = True  # Must have EmpresaID
     warehouse_column: bool = True  # Must have BodegaID
@@ -130,75 +178,72 @@ class SchemaManager:
 
     def create_table(self, table_def: TableDefinition) -> str:
         """
-        Generate CREATE TABLE DDL script
-        
+        Generate an idempotent SQL Server CREATE TABLE script (PK CLUSTERED, multisector indexes).
+
         Args:
             table_def: Table definition
-            
+
         Returns:
-            SQL script
+            T-SQL script (single batch)
         """
         self.logger.info(f"Creating table: {table_def.name}")
-        
-        # Start building DDL
-        ddl_lines = [
-            f"CREATE TABLE IF NOT EXISTS {table_def.schema}.{table_def.name} (",
-        ]
+        schema, table = quote_identifier(table_def.schema), quote_identifier(table_def.name)
+        object_name = sql_string(f"{table_def.schema}.{table_def.name}")
 
-        # Add all columns
-        for i, col in enumerate(table_def.columns):
-            col_def = f"  {col.name} {col.type.value}"
-            
-            if col.primary_key:
-                col_def += " PRIMARY KEY"
-            if not col.nullable:
-                col_def += " NOT NULL"
+        column_lines = []
+        for col in table_def.columns:
+            name = quote_identifier(col.name)
+            nullable = col.nullable and not col.primary_key
+            col_def = f"        {name} {SQLSERVER_TYPES[col.type]} {'NULL' if nullable else 'NOT NULL'}"
             if col.default:
-                col_def += f" DEFAULT {col.default}"
-            if col.unique:
-                col_def += " UNIQUE"
-            
-            # Add comma if not last column
-            if i < len(table_def.columns) - 1:
-                col_def += ","
-            
-            ddl_lines.append(col_def)
+                col_def += f" CONSTRAINT [DF_{table_def.name}_{col.name}] DEFAULT {default_literal(col)}"
+            if col.primary_key:
+                col_def += f" CONSTRAINT [PK_{table_def.name}] PRIMARY KEY CLUSTERED"
+            elif col.unique:
+                col_def += f" CONSTRAINT [UQ_{table_def.name}_{col.name}] UNIQUE"
+            if col.type == ColumnType.JSON:
+                col_def += f" CONSTRAINT [CK_{table_def.name}_{col.name}_json] CHECK (ISJSON({name}) = 1)"
+            column_lines.append(col_def)
 
-        # Add audit columns if enabled
         if table_def.audit_columns:
-            ddl_lines[-1] += ","  # Add comma to previous line
-            ddl_lines.extend([
-                "  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,",
-                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,",
-                "  created_by VARCHAR(100)"
+            column_lines.extend([
+                f"        [created_at] DATETIME2 NOT NULL CONSTRAINT [DF_{table_def.name}_created_at] DEFAULT SYSUTCDATETIME()",
+                f"        [updated_at] DATETIME2 NOT NULL CONSTRAINT [DF_{table_def.name}_updated_at] DEFAULT SYSUTCDATETIME()",
+                "        [created_by] NVARCHAR(100) NULL",
             ])
 
-        ddl_lines.append(");")
+        description = table_def.description.replace("|", "/").replace("\n", " ") if table_def.description else table_def.name
+        ddl_lines = [
+            f"--| Tabla {table_def.schema}.{table_def.name}: {description} |",
+            f"IF OBJECT_ID({object_name}, N'U') IS NULL",
+            "BEGIN",
+            f"    CREATE TABLE {schema}.{table} (",
+            ",\n".join(column_lines),
+            "    );",
+            "END;",
+        ]
 
-        # Add indexes for multisector columns
-        if table_def.company_column:
-            ddl_lines.append(
-                f"CREATE INDEX IF NOT EXISTS idx_{table_def.name}_empresa_id "
-                f"ON {table_def.schema}.{table_def.name}(empresa_id);"
-            )
-        
-        if table_def.warehouse_column:
-            ddl_lines.append(
-                f"CREATE INDEX IF NOT EXISTS idx_{table_def.name}_bodega_id "
-                f"ON {table_def.schema}.{table_def.name}(bodega_id);"
-            )
+        for flag, column in ((table_def.company_column, "empresa_id"), (table_def.warehouse_column, "bodega_id")):
+            if flag:
+                index = f"idx_{table_def.name}_{column}"
+                ddl_lines.extend([
+                    f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = {sql_string(index)} AND object_id = OBJECT_ID({object_name}))",
+                    f"    CREATE INDEX [{index}] ON {schema}.{table} ([{column}]);",
+                ])
 
-        # Add comment
         if table_def.description:
             ddl_lines.append(
-                f"COMMENT ON TABLE {table_def.schema}.{table_def.name} "
-                f"IS '{table_def.description}';"
+                "IF NOT EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID("
+                f"{object_name}) AND minor_id = 0 AND name = N'MS_Description')\n"
+                f"    EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = {sql_string(table_def.description)}, "
+                f"@level0type = N'SCHEMA', @level0name = {sql_string(table_def.schema)}, "
+                f"@level1type = N'TABLE', @level1name = {sql_string(table_def.name)};"
             )
 
         sql = "\n".join(ddl_lines)
         self.schemas[table_def.name] = table_def
         self.logger.debug(f"Generated DDL for {table_def.name}")
-        
+
         return sql
 
     def validate_schema(self, table_def: TableDefinition) -> tuple[bool, Optional[str]]:
@@ -211,6 +256,10 @@ class SchemaManager:
         Returns:
             (is_valid, error_message)
         """
+        for name in [table_def.schema, table_def.name, *(col.name for col in table_def.columns)]:
+            if not IDENTIFIER.match(name or ""):
+                return False, f"Invalid identifier: {name!r} (letters, digits and '_' only)"
+
         # Check multisector columns
         column_names = {col.name for col in table_def.columns}
         
@@ -228,7 +277,20 @@ class SchemaManager:
         pk_count = sum(1 for col in table_def.columns if col.primary_key)
         if pk_count > 1:
             return False, "Multiple primary keys not allowed"
-        
+
+        reserved = {"created_at", "updated_at", "created_by"}
+        if table_def.audit_columns and reserved & column_names:
+            return False, f"Columns reserved for audit: {', '.join(sorted(reserved & column_names))}"
+
+        for col in table_def.columns:
+            if (col.primary_key or col.unique) and col.type in UNINDEXABLE_TYPES:
+                return False, f"Column {col.name} of type {col.type.value} cannot be PRIMARY KEY or UNIQUE"
+            if col.default:
+                try:
+                    default_literal(col)
+                except ValueError as e:
+                    return False, str(e)
+
         return True, None
 
     def get_schema_hash(self, table_def: TableDefinition) -> str:
@@ -311,7 +373,7 @@ class MigrationEngine:
             for table, columns in changes["columns_added"].items():
                 for col in columns:
                     sql_lines.append(
-                        f"ALTER TABLE {table} ADD COLUMN {col['name']} {col['type']};"
+                        f"ALTER TABLE {quote_identifier(table)} ADD {quote_identifier(col['name'])} {col['type']};"
                     )
 
         # Handle new tables
@@ -322,7 +384,7 @@ class MigrationEngine:
         sql_lines.extend([
             "",
             "-- Update schema version",
-            f"INSERT INTO schema_versions (version, applied_at) VALUES ('{new_version}', NOW());",
+            f"INSERT INTO schema_versions (version, applied_at) VALUES ({sql_string(new_version)}, SYSUTCDATETIME());",
             "COMMIT;"
         ])
 

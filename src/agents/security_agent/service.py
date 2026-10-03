@@ -154,6 +154,11 @@ class SecurityService:
             AuditEntry(id_empresa, accion, resultado, id_usuario, recurso, detalles, ip, self._now())
         )
 
+    def record_audit(self, actor: Principal, accion: str, recurso: str, detalles: Optional[str] = None,
+                     resultado: str = AuditResult.SUCCESS, ip: Optional[str] = None) -> None:
+        """Registra en la bitácora de Sentinel una operación hecha por otro agente."""
+        self._audit(actor.id_empresa, accion, resultado, actor.id, recurso, detalles[:4000] if detalles else None, ip)
+
     def _recent_failures(self, account: str) -> List[datetime]:
         window = timedelta(minutes=self._settings.lockout_window_minutes)
         return self._repo.login_failures_since(account, self._now() - window)

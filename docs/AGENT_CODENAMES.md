@@ -31,6 +31,26 @@ Cortex es la puerta de entrada de la fábrica. No construye nada por sí mismo:
 
 API: `/api/v1/cortex` (`POST /requests`, `POST /requests/{id}/answers`, `POST /requests/{id}/approve`, `GET /requests`, `GET /requests/{id}`, `GET /info`).
 
+## Nexus: datos
+
+Código: `src/agents/database_agent/` · API: `/api/v1/nexus` (todo requiere token de Sentinel salvo `GET /salud`) · Permisos: `NEXUS_MATRIX_SCHEMA.sql`.
+
+- **Esquema.** `GET /esquema/tablas` y `GET /esquema/tablas/{esquema.tabla}` (columnas, clave primaria, índices, claves foráneas, filas). Requiere `esquema:ver`.
+- **DDL de SQL Server.** `POST /esquema/ddl` genera el script idempotente (PK CLUSTERED, índices `empresa_id`/`bodega_id`, columnas de auditoría, descripción como propiedad extendida) sin ejecutarlo; `POST /esquema/tablas` lo aplica (requiere `esquema:modificar`). Los nombres solo admiten letras, números y `_`, y los valores por defecto se traducen a literales seguros.
+- **Procedimientos almacenados.** `GET /procedimientos` y `GET /procedimientos/{nombre}` (parámetros y definición). `POST /procedimientos/{nombre}/ejecutar` (requiere `procedimientos:ejecutar`) solo acepta procedimientos de usuario y parámetros declarados, siempre parametrizados; devuelve los conjuntos de resultado con tope de `NEXUS_MAX_ROWS` filas.
+- **Respaldos.** `POST /respaldos` hace `BACKUP DATABASE ... COPY_ONLY, CHECKSUM` y lo verifica con `RESTORE VERIFYONLY`; `GET /respaldos` lista el historial de msdb. Requiere `respaldos:gestionar`.
+- Crear tablas, ejecutar procedimientos y respaldar queda en `bitacora_auditoria` de Sentinel (sin los valores de los parámetros).
+
+## Matrix: reglas de negocio
+
+Código: `src/agents/business_rules_agent/` · API: `/api/v1/matrix` (todo requiere token de Sentinel salvo `GET /salud`) · Tablas: `reglas_negocio`, `condiciones_regla`, `acciones_regla`, `auditoria_evaluacion_reglas`.
+
+- **Reglas jerárquicas.** Alcance `global`, `linea_negocio` o `empresa`, con prioridad. `GET /reglas`, `GET /reglas/{id}` (requieren `reglas:ver`); `POST /reglas`, `PUT /reglas/{id}`, `DELETE /reglas/{id}` (archiva; requieren `reglas:gestionar`).
+- **Motor.** Operadores `eq, neq, gt, gte, lt, lte, in, not_in, contains, regex`, condiciones encadenadas con `AND`/`OR`, y acciones `calculate, set_field, notify, block, allow, log`. Las fórmulas de `calculate` usan un evaluador aritmético propio (números, variables del contexto, `+ - * / // % **`, `min/max/round/abs`); nunca `eval`.
+- **Evaluación.** `POST /reglas/{id}/evaluar` evalúa una regla; `POST /evaluar` evalúa todas las reglas activas que aplican a la empresa y línea de negocio, de mayor a menor prioridad, y devuelve la decisión global (`bloqueada` si alguna bloquea), los valores calculados y las notificaciones. Requieren `reglas:evaluar` y cada evaluación queda en `auditoria_evaluacion_reglas`.
+- **Pruebas sin efectos.** `POST /reglas/{id}/probar` corre escenarios con resultado esperado sin escribir auditoría.
+- **Seguimiento.** `GET /auditoria` y `GET /analitica` (evaluaciones, bloqueos, tasa de cumplimiento, tiempo promedio y reglas activas sin uso).
+
 ## Sentinel: seguridad
 
 Código: `src/agents/security_agent/` · API: `/api/v1/sentinel` · Esquema: `SENTINEL_SCHEMA_SPANISH.sql` + `SENTINEL_SCHEMA_PHASE2.sql`.

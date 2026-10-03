@@ -56,13 +56,14 @@ Si no activas el venv y existe `venv/` en la raíz, `run.py` intenta usarlo solo
 - ReDoc: http://localhost:8000/redoc
 - Health: http://localhost:8000/health
 
-Sentinel usa SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez la migración incremental:
+Sentinel, Nexus y Matrix usan SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez las migraciones incrementales (idempotentes):
 
 ```powershell
 sqlcmd -S localhost -U sa -C -i SENTINEL_SCHEMA_PHASE2.sql
+sqlcmd -S localhost -U sa -C -i NEXUS_MATRIX_SCHEMA.sql
 ```
 
-Sin SQL Server, `SENTINEL_REPOSITORY=memory` arranca Sentinel con datos en memoria (solo desarrollo).
+Sin SQL Server, `SENTINEL_REPOSITORY=memory`, `NEXUS_CATALOG=memory` y `MATRIX_REPOSITORY=memory` arrancan con datos en memoria (solo desarrollo). Para comprobar Nexus y Matrix contra la base sin dejar cambios: `venv\Scripts\python.exe scripts\verify_nexus_matrix_sqlserver.py`.
 
 Solo runtime (sin tests):
 
