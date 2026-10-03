@@ -56,15 +56,18 @@ Si no activas el venv y existe `venv/` en la raíz, `run.py` intenta usarlo solo
 - ReDoc: http://localhost:8000/redoc
 - Health: http://localhost:8000/health
 
-Sentinel, Nexus, Matrix, Aurora, Vector, Prism, Orbit e Insight usan SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez las migraciones incrementales (idempotentes); el script lee las credenciales de `.env`:
+Sentinel, Nexus, Synapse, Matrix, Aurora, Vector, Prism, Orbit, Insight y Genesis usan SQL Server (base `kinetix`). Configura `.env` a partir de `.env.example` y aplica una vez las migraciones incrementales (idempotentes); el script lee las credenciales de `.env`:
 
 ```powershell
 venv\Scripts\python.exe scripts\apply_sql_migration.py SENTINEL_SCHEMA_PHASE2.sql
 venv\Scripts\python.exe scripts\apply_sql_migration.py NEXUS_MATRIX_SCHEMA.sql
 venv\Scripts\python.exe scripts\apply_sql_migration.py PLATFORM_AGENTS_SCHEMA.sql
+venv\Scripts\python.exe scripts\apply_sql_migration.py SYNAPSE_GENESIS_SCHEMA.sql
 ```
 
-Sin SQL Server, cada agente acepta su variable en `memory` (`SENTINEL_REPOSITORY`, `NEXUS_CATALOG`, `MATRIX_REPOSITORY`, `AURORA_REPOSITORY`, `VECTOR_REPOSITORY`, `PRISM_REPOSITORY`, `ORBIT_REPOSITORY`, `INSIGHT_REPOSITORY`) y arranca con datos en memoria (solo desarrollo). Para comprobar Nexus y Matrix contra la base sin dejar cambios: `venv\Scripts\python.exe scripts\verify_nexus_matrix_sqlserver.py`; para ver permisos, roles y tablas de los agentes: `venv\Scripts\python.exe scripts\check_agent_permissions.py`.
+Synapse necesita `SYNAPSE_ENCRYPTION_KEY` para cifrar las credenciales de las integraciones y Genesis al menos una de `ANTHROPIC_API_KEY` u `OPENAI_API_KEY` (ver `.env.example`).
+
+Sin SQL Server, cada agente acepta su variable en `memory` (`SENTINEL_REPOSITORY`, `NEXUS_CATALOG`, `SYNAPSE_REPOSITORY`, `MATRIX_REPOSITORY`, `AURORA_REPOSITORY`, `VECTOR_REPOSITORY`, `PRISM_REPOSITORY`, `ORBIT_REPOSITORY`, `INSIGHT_REPOSITORY`, `GENESIS_REPOSITORY`) y arranca con datos en memoria (solo desarrollo; Synapse usa entonces una llave de cifrado temporal). Para comprobar Nexus y Matrix contra la base sin dejar cambios: `venv\Scripts\python.exe scripts\verify_nexus_matrix_sqlserver.py`; para ver permisos, roles y tablas de los agentes: `venv\Scripts\python.exe scripts\check_agent_permissions.py`.
 
 Solo runtime (sin tests):
 

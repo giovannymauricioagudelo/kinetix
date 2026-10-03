@@ -12,7 +12,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 import httpx
 
 from src.agents.agent_catalog import (
-    ALL_AGENTS, ARGUS, AURORA, INSIGHT, MATRIX, NEXUS, ORBIT, PRISM, SENTINEL, VECTOR, AgentProfile,
+    ALL_AGENTS, ARGUS, AURORA, GENESIS, INSIGHT, MATRIX, NEXUS, ORBIT, PRISM, SENTINEL, SYNAPSE, VECTOR, AgentProfile,
 )
 from src.agents.monitoring_agent.collector import MetricsCollector
 from src.agents.monitoring_agent.middleware import PROBE_HEADER, PROBE_TOKEN
@@ -22,7 +22,7 @@ SLOW = "lento"
 DOWN = "caido"
 NOT_DEPLOYED = "no_desplegado"
 
-_PROBE_SUFFIX = {p.codename: "/salud" for p in (NEXUS, MATRIX, INSIGHT, PRISM, ORBIT, VECTOR, AURORA, SENTINEL, ARGUS)}
+_PROBE_SUFFIX = {p.codename: "/salud" for p in (NEXUS, SYNAPSE, MATRIX, INSIGHT, PRISM, ORBIT, VECTOR, GENESIS, AURORA, SENTINEL, ARGUS)}
 
 
 def probe_path(profile: AgentProfile) -> str:

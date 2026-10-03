@@ -32,7 +32,7 @@ SYNAPSE = AgentProfile(
     "APIsAgent",
     "Los impulsos que conectan con el exterior.",
     "apis",
-    6,
+    13,
 )
 MATRIX = AgentProfile(
     "Matrix",
@@ -74,7 +74,7 @@ GENESIS = AgentProfile(
     "CustomAIAgent",
     "Genera código y soluciones AI automáticamente.",
     "genesis",
-    6,
+    15,
 )
 AURORA = AgentProfile(
     "Aurora",

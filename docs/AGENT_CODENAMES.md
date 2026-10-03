@@ -103,6 +103,33 @@ Código: `src/agents/reporting_agent/` · API: `/api/v1/insight` · Permisos: `r
 - **Programaciones** diarias, semanales o mensuales a una hora UTC. Corren cada `INSIGHT_SCHEDULER_INTERVAL_SECONDS` con la identidad de quien las creó y vuelven a verificar `reportes:programar`; si se le retiró el permiso, la ejecución queda en error. Con varias instancias, cada ejecución se reclama de forma atómica para no duplicarse.
 - **KPIs** (`GET /kpis`): resumen de reglas, API, calidad, despliegues y código. Si un agente no responde, su sección aparece como no disponible y el resto se entrega igual.
 
+## Synapse y Genesis: integraciones e IA
+
+Mismo patrón que los agentes de plataforma: token de Sentinel salvo `GET /salud`, cambios de configuración en `bitacora_auditoria`, SQL Server (`SYNAPSE_GENESIS_SCHEMA.sql`: tablas, permisos y asignación a `rol_admin`/`rol_auditor`) y `SYNAPSE_REPOSITORY` / `GENESIS_REPOSITORY=memory` para desarrollo.
+
+### Synapse: pasarela de integraciones
+
+Código: `src/agents/apis_agent/` · API: `/api/v1/synapse` · Permisos: `integraciones:ver`, `integraciones:gestionar`, `integraciones:invocar` · Tablas: `synapse_integraciones`, `synapse_llamadas`.
+
+- **Integraciones por empresa** (`/integraciones`): URL base, autenticación `none`, `bearer`, `api_key` (encabezado o parámetro de consulta) o `basic`, encabezados fijos, timeout, reintentos y límite por minuto. `PUT` acepta la `version` leída (409 si cambió).
+- **Credenciales cifradas** con Fernet (`SYNAPSE_ENCRYPTION_KEY`, rotación con varias llaves separadas por coma). La API solo informa `credencial_configurada`; nunca devuelve el secreto, ni lo escribe en la bitácora o la auditoría.
+- **Protección SSRF.** Solo `https` (salvo `SYNAPSE_PERMITIR_HTTP`), sin usuario/contraseña en la URL. El host se resuelve antes de cada llamada y se rechaza si apunta a una IP privada, de loopback o reservada (salvo los hosts de `SYNAPSE_HOSTS_PRIVADOS_PERMITIDOS`). Las redirecciones no se siguen, se ignoran los proxies del entorno y la respuesta se corta en `SYNAPSE_MAX_RESPUESTA_BYTES`. Encabezados como `Authorization`, `Host` o `Cookie` no se pueden inyectar.
+- **OpenAPI** (`POST /integraciones/{id}/especificacion`): importa OpenAPI 3.x o Swagger 2.0 en JSON o YAML (objeto, texto o URL). `GET /integraciones/{id}/operaciones` lista las operaciones; con una especificación importada, `POST /integraciones/{id}/llamar` solo acepta operaciones declaradas (`id_operacion` con sus parámetros tipados, o `metodo` + `ruta` que coincidan con una).
+- **Llamadas resilientes.** Límite de tasa por integración (429 con `Retry-After`), circuit breaker (`SYNAPSE_CIRCUITO_FALLOS` fallos 5xx o de red seguidos lo abren durante `SYNAPSE_CIRCUITO_ESPERA_SEGUNDOS`; luego deja pasar una llamada de prueba) y reintentos con backoff ante 429/502/503/504, solo en métodos idempotentes o si se envía `clave_idempotencia` (viaja como `Idempotency-Key`).
+- **Pruebas y métricas.** `POST /integraciones/{id}/probar` (GET o HEAD) marca la integración como `saludable`, `degradada` o `caida`. `GET /llamadas` es la bitácora, sin cuerpos ni credenciales. `GET /metricas` da la tasa de éxito, la latencia p50/p95, los reintentos y el estado del circuito por integración.
+
+### Genesis: agentes de IA y generación de código
+
+Código: `src/agents/custom_ai_agent/` · API: `/api/v1/genesis` · Permisos: `ia:ver`, `ia:gestionar`, `ia:invocar` (y `codigo:escribir` de Vector para commitear) · Tablas: `genesis_agentes`, `genesis_invocaciones`, `genesis_generaciones`, `genesis_presupuestos`.
+
+- **Proveedores:** Anthropic (Messages API) y OpenAI (Chat Completions) por HTTP, con `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. `GET /salud` indica cuáles están configurados.
+- **Cascada de modelos.** Las tareas simples van al nivel `economico` y las complejas (código o SQL extensos, arquitectura, seguridad, migraciones, rendimiento) al `premium`. Los modelos se configuran con `GENESIS_<PROVEEDOR>_MODELO_<NIVEL>`. Si el proveedor preferido falla, se intenta el otro; si ambos fallan, responde 502.
+- **Agentes personalizados por empresa** (`/agentes`): prompt de sistema, proveedor, nivel, temperatura y máximo de tokens, con versión optimista. `DELETE` los archiva. `POST /agentes/{id}/invocar` responde con el modelo usado, los tokens y el costo estimado.
+- **Datos sensibles.** Contraseñas, llaves, tokens y llaves privadas evidentes se reemplazan por `***` antes de enviar el prompt al proveedor. Solo se guarda la versión redactada, y no se guarda nada con `GENESIS_GUARDAR_CONTENIDO=false`.
+- **Generación revisada** (`POST /generaciones`): código Python/TypeScript/JavaScript, T-SQL o Markdown. El Python lo analiza Vector (queda en su historial); el SQL se revisa contra `DROP`, `TRUNCATE`, `xp_cmdshell`, permisos, SQL dinámico, `DELETE`/`UPDATE` sin `WHERE` y `SELECT *`; en todo se buscan secretos.
+- **Commit vía Vector** (`POST /generaciones/{id}/commit`, requiere `codigo:escribir`): crea el archivo en una rama `feature/`, `fix/`, `chore/` o `vector/` sin tocar `master`/`main`. Se rechaza si la generación tiene hallazgos críticos o ya se commiteó.
+- **Presupuesto mensual de tokens por empresa** (`GET /uso`, `PUT /presupuesto`; por defecto `GENESIS_PRESUPUESTO_TOKENS_MENSUAL`). Avisa al 80 %; si una solicitud lo excedería, se rechaza con 429 hasta el mes siguiente y queda registrada como `rechazada`.
+
 ## Sentinel: seguridad
 
 Código: `src/agents/security_agent/` · API: `/api/v1/sentinel` · Esquema: `SENTINEL_SCHEMA_SPANISH.sql` + `SENTINEL_SCHEMA_PHASE2.sql`.
@@ -113,7 +140,7 @@ Código: `src/agents/security_agent/` · API: `/api/v1/sentinel` · Esquema: `SE
 - **Gestión del MFA con reautenticación.** `POST /configurar-mfa` no puede pisar un MFA activo; `POST /deshabilitar-mfa` exige contraseña y código vigente.
 - **RBAC sobre las tablas existentes.** `GET /permisos`, `POST /autorizar`, `POST /roles/asignar` (requiere `roles:asignar`), `POST /permisos/otorgar` (requiere `permisos:otorgar`), siempre dentro de la misma empresa.
 - **Cumplimiento.** `GET /auditoria` y `GET /reporte-cumplimiento` (requieren `auditoria:ver`): inicios de sesión, fallos, bloqueos, reutilización de tokens, adopción de MFA y hallazgos.
-- **Para otros agentes.** `require_user` y `require_permission("recurso:accion")` en `src/agents/security_agent/dependencies.py`. Con `KINETIX_REQUIRE_AUTH=true`, los agentes legacy y Cortex exigen token de Sentinel.
+- **Para otros agentes.** `require_user` y `require_permission("recurso:accion")` en `src/agents/security_agent/dependencies.py`. Con `KINETIX_REQUIRE_AUTH=true`, Cortex también exige token de Sentinel (el resto de agentes lo exige siempre).
 
 Pendiente de fases siguientes: OAuth2/SAML, cifrado y bóveda de secretos, dispositivos de confianza.
 

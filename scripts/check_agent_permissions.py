@@ -1,5 +1,5 @@
 """
-Muestra los permisos de los agentes (Nexus, Matrix, Sentinel, Argus, Aurora, Vector, Prism, Orbit, Insight),
+Muestra los permisos de los agentes (Nexus, Synapse, Matrix, Sentinel, Argus, Aurora, Vector, Prism, Orbit, Insight, Genesis),
 a qué roles están asignados, qué ve cada usuario y si existen las tablas de la plataforma.
 Uso: venv\\Scripts\\python.exe scripts\\check_agent_permissions.py
 """
@@ -16,10 +16,11 @@ import pyodbc  # noqa: E402
 
 from src.agents.security_agent.config import load_sqlserver_settings  # noqa: E402
 
-AGENT_PREFIXES = ("nexus", "matrix", "sentinel", "argus", "aurora", "vector", "prism", "orbit", "insight")
+AGENT_PREFIXES = ("nexus", "synapse", "matrix", "sentinel", "argus", "aurora", "vector", "prism", "orbit", "insight", "genesis")
 AGENT_PERMISSIONS = "(" + " OR ".join(f"p.id LIKE 'perm_{a}_%'" for a in AGENT_PREFIXES) + ")"
 PLATFORM_TABLES = ("aurora_sistemas", "aurora_componentes", "vector_analisis", "prism_ejecuciones", "orbit_despliegues",
-                   "insight_programaciones", "insight_reportes")
+                   "insight_programaciones", "insight_reportes", "synapse_integraciones", "synapse_llamadas", "genesis_agentes",
+                   "genesis_invocaciones", "genesis_generaciones", "genesis_presupuestos")
 
 
 def main() -> None:
