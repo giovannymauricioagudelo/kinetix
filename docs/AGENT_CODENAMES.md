@@ -41,6 +41,23 @@ Código: `src/agents/database_agent/` · API: `/api/v1/nexus` (todo requiere tok
 - **Respaldos.** `POST /respaldos` hace `BACKUP DATABASE ... COPY_ONLY, CHECKSUM` y lo verifica con `RESTORE VERIFYONLY`; `GET /respaldos` lista el historial de msdb. Requiere `respaldos:gestionar`.
 - Crear tablas, ejecutar procedimientos y respaldar queda en `bitacora_auditoria` de Sentinel (sin los valores de los parámetros).
 
+### Nexus: bases de datos de las aplicaciones
+
+Cada aplicación que genera la fábrica tiene su propia base de datos, registrada en la base principal `kinetix` (`NEXUS_APLICACIONES_SCHEMA.sql`: `nexus_aplicaciones`, `nexus_aplicacion_empresas`, `nexus_bases_datos`, `nexus_migraciones`, `nexus_despliegues`). Cortex pregunta el modelo de datos (`modelo_datos`) al planear una aplicación nueva, y ese modelo decide cómo se crean los objetos:
+
+| Modelo | Bases | Tablas |
+|---|---|---|
+| `por_empresa` | Una base independiente por empresa: `{app}_{empresa}` | Sin columna de empresa |
+| `multiempresa` | Una base compartida: `{app}` | `id_empresa` con FK a `dbo.empresas`, índice y, si `seguridad_por_fila`, una política RLS que filtra por `SESSION_CONTEXT('id_empresa')` |
+
+En `multiempresa` la aplicación debe ejecutar `EXEC sp_set_session_context 'id_empresa', @empresa` al abrir cada conexión; los usuarios `db_owner` (el despliegue de Nexus) ven todas las filas.
+
+- **Registro** (`aplicaciones:gestionar`). `POST /aplicaciones` (`id_aplicacion`, `nombre`, `modelo_datos`, `id_solicitud` de Cortex, `empresas`), `POST /aplicaciones/{id}/empresas` (en `por_empresa` registra una base nueva). Nexus no adopta bases que ya existan en el servidor ni nombres reservados (`master`, `kinetix`…).
+- **Objetos.** `POST /aplicaciones/{id}/tablas` genera el DDL según el modelo y lo registra como migración (`?vista_previa=true` solo lo devuelve); `POST /aplicaciones/{id}/migraciones` registra SQL propio. Las migraciones son numeradas, inmutables y llevan SHA-256; el SQL propio rechaza `USE`, `CREATE/DROP DATABASE`, logins, permisos de servidor, `xp_*`, `OPENROWSET`, `BACKUP/RESTORE`, SQL dinámico, `DROP TABLE`/`TRUNCATE` y los esquemas internos `despliegue` y `seguridad`.
+- **Despliegue** (`aplicaciones:desplegar`). `POST /aplicaciones/{id}/desplegar` (opcional `id_empresa` en `por_empresa`) crea la base si falta, aplica en orden las migraciones pendientes con un bloqueo `sp_getapplock`, guarda el historial en `despliegue.migraciones` de cada base (falla si el checksum de una migración aplicada cambió) y sincroniza `dbo.empresas` en `multiempresa`. Cada base registra su estado y versión; cada intento queda en `nexus_despliegues` (`GET /aplicaciones/{id}/despliegues`).
+- **Consulta** (`aplicaciones:ver`). `GET /aplicaciones` (con bases desactualizadas), `GET /aplicaciones/{id}` (empresas, bases con migraciones pendientes, migraciones), `GET /aplicaciones/{id}/migraciones/{numero}` (incluye el script).
+- `NEXUS_CATALOG=memory` usa también un registro y un aprovisionador en memoria. Variables: `NEXUS_DEPLOY_TIMEOUT_SECONDS` (120) y `NEXUS_DEPLOY_LOCK_TIMEOUT_MS` (30000).
+
 ## Matrix: reglas de negocio
 
 Código: `src/agents/business_rules_agent/` · API: `/api/v1/matrix` (todo requiere token de Sentinel salvo `GET /salud`) · Tablas: `reglas_negocio`, `condiciones_regla`, `acciones_regla`, `auditoria_evaluacion_reglas`.
@@ -62,7 +79,8 @@ Código: `src/agents/interface_design_agent/` · API: `/api/v1/aurora` · Permis
 - **Sistemas de diseño por empresa** (`/sistemas`): paletas generadas (50–900) a partir de colores base, tipografía, espaciado, radios, sombras, breakpoints 320/768/1024 y temas claro/oscuro. Los tokens se versionan con control optimista (`PUT /sistemas/{id}/tokens` exige la versión leída; 409 si cambió).
 - **Accesibilidad WCAG 2.1.** `POST /contraste` calcula la relación de contraste; `POST /sistemas/{id}/accesibilidad` audita todos los pares texto/fondo del sistema y, con `aplicar`, corrige los colores hasta cumplir AA o AAA. Los componentes (`PUT /sistemas/{id}/componentes`) se revisan contra criterios como etiquetas (1.3.1), foco (2.4.3/2.4.7) y trampas de teclado (2.1.2).
 - **Exportación** (`GET /sistemas/{id}/exportar?formato=`): `css` (variables y `[data-theme="dark"]`), `scss`, `tailwind`, `json` (formato DTCG) y `android` (XML).
-- **Layouts y pantallas.** `POST /sistemas/{id}/layout` (`grid`, `sidebar`, `stack`, con media queries) y `POST /sistemas/{id}/pantallas` (`login`, `dashboard`, `list`, `form`): HTML semántico y accesible, con todo el texto escapado.
+- **Layouts.** `POST /sistemas/{id}/layout` (`grid`, `sidebar`, `stack`, con media queries).
+- **Pantallas** (`POST /sistemas/{id}/pantallas`, código en `screens.py`): prototipos navegables `login`, `dashboard`, `list`, `form`, `detail` y `settings` en `es`, `en` o `pt`, con todo el texto escapado y sin dependencias externas. Comparten un shell con barra lateral contraíble (menú móvil), búsqueda global (atajo `/`), selector de empresa si `multiempresa`, notificaciones, tema claro/oscuro persistente, menú de usuario y migas de pan. El listado trae búsqueda, filtro por estado, orden por columna, selección múltiple con eliminación confirmada, paginación, vista compacta, estado vacío y exportación CSV (protegida contra inyección de fórmulas); el formulario, secciones, validación en línea, barra de acciones fija y confirmación al descartar; el tablero, KPI con tendencia, gráfico SVG con tabla de datos accesible, actividad y acciones rápidas. `opciones` adapta `entidad`, `entidad_plural`, `campos` (`text`, `email`, `number`, `date`, `tel`, `select`, `textarea`, `checkbox`), `columnas`, `modulos`, `empresas`, `usuario` y `kpis`. La respuesta incluye `componentes_usados`, `funcionalidades` y `opciones_aplicadas`.
 
 ### Vector: desarrollo
 

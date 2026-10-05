@@ -1,8 +1,7 @@
-"""Exportadores de Aurora: tokens a CSS/SCSS/Tailwind/DTCG/Android, layouts responsivos y pantallas HTML accesibles."""
+"""Exportadores de Aurora: tokens a CSS/SCSS/Tailwind/DTCG/Android y layouts responsivos (pantallas HTML en screens.py)."""
 
 from __future__ import annotations
 
-import html
 import json
 from typing import Any, Dict, List, Tuple
 
@@ -10,7 +9,6 @@ from src.agents.interface_design_agent.design import DesignError
 
 EXPORT_FORMATS = ("css", "scss", "tailwind", "json", "android")
 LAYOUT_TYPES = ("grid", "sidebar", "stack")
-SCREEN_TYPES = ("login", "dashboard", "list", "form")
 MEDIA_TYPES = {
     "css": "text/css", "scss": "text/x-scss", "tailwind": "application/javascript",
     "json": "application/json", "android": "application/xml", "html": "text/html",
@@ -187,110 +185,3 @@ def responsive_layout(tokens: Dict[str, Any], layout: str, columns: Dict[str, in
         "css": css,
         "clases_generadas": css.count("{") - css.count("@media"),
     }
-
-
-# ============================================================================ pantallas
-
-
-def _base_styles() -> str:
-    return """
-*, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; font-family: var(--font-family); font-size: var(--font-size-base); line-height: var(--line-height-normal);
-       color: var(--color-text); background: var(--color-background); }
-h1 { font-size: var(--font-size-3xl); line-height: var(--line-height-tight); margin: 0 0 var(--space-md); }
-h2 { font-size: var(--font-size-xl); margin: 0 0 var(--space-sm); }
-a { color: var(--color-link); }
-:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
-.skip-link { position: absolute; left: -9999px; top: var(--space-sm); background: var(--color-surface); padding: var(--space-sm); }
-.skip-link:focus { left: var(--space-sm); }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.container { max-width: 1200px; margin-inline: auto; padding: var(--space-lg) var(--space-md); }
-.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-sm); padding: var(--space-lg); }
-.field { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-md); }
-.field input, .field select { min-height: 44px; padding: var(--space-sm) var(--space-md); font: inherit; color: var(--color-text);
-        background: var(--color-background); border: 1px solid var(--color-input-border); border-radius: var(--radius-md); }
-.field .error { color: var(--color-error-text); font-size: var(--font-size-sm); }
-.btn { min-height: 44px; min-width: 44px; padding: var(--space-sm) var(--space-lg); font: inherit; font-weight: var(--font-weight-medium);
-       border: 0; border-radius: var(--radius-md); cursor: pointer; background: var(--color-primary); color: var(--color-on-primary); }
-.btn--secondary { background: var(--color-secondary); color: var(--color-on-secondary); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.grid { display: grid; gap: var(--space-md); grid-template-columns: 1fr; }
-@media (min-width: 768px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 1024px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--color-border); }
-nav ul { display: flex; gap: var(--space-md); list-style: none; margin: 0; padding: 0; }
-header.app { display: flex; justify-content: space-between; align-items: center; padding: var(--space-md);
-             border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-"""
-
-
-def _shell(title: str, app: str, lang: str, css: str, body: str, with_nav: bool) -> str:
-    nav = (
-        f'<header class="app"><strong>{app}</strong><nav aria-label="Principal"><ul>'
-        '<li><a href="#" aria-current="page">Inicio</a></li><li><a href="#">Reportes</a></li>'
-        '<li><a href="#">Configuración</a></li></ul></nav></header>'
-        if with_nav else ""
-    )
-    return (
-        f'<!DOCTYPE html>\n<html lang="{lang}">\n<head>\n<meta charset="utf-8">\n'
-        f'<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>{title} · {app}</title>\n'
-        f"<style>\n{css}{_base_styles()}</style>\n</head>\n<body>\n"
-        f'<a class="skip-link" href="#contenido">Saltar al contenido</a>\n{nav}\n'
-        f'<main id="contenido" class="container">\n{body}\n</main>\n</body>\n</html>\n'
-    )
-
-
-def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = "es") -> Dict[str, Any]:
-    if screen not in SCREEN_TYPES:
-        raise DesignError(f"Tipo de pantalla no soportado: {screen!r} (opciones: {', '.join(SCREEN_TYPES)})")
-    if lang not in ("es", "en", "pt"):
-        raise DesignError("idioma debe ser es, en o pt")
-    app = html.escape(app_name)
-    css = to_css(tokens)
-    if screen == "login":
-        body = (
-            '<section class="card" style="max-width:420px;margin:var(--space-2xl) auto" aria-labelledby="t">'
-            '<h1 id="t">Iniciar sesión</h1><form method="post" novalidate>'
-            '<div class="field"><label for="u">Usuario</label><input id="u" name="usuario" autocomplete="username" required></div>'
-            '<div class="field"><label for="p">Contraseña</label><input id="p" name="contrasena" type="password" '
-            'autocomplete="current-password" required aria-describedby="p-err"><span id="p-err" class="error" role="alert"></span></div>'
-            '<button class="btn" type="submit">Entrar</button></form></section>'
-        )
-        components, with_nav = ["Card", "TextField", "Button"], False
-    elif screen == "dashboard":
-        cards = "".join(
-            f'<article class="card" aria-labelledby="k{i}"><h2 id="k{i}">{name}</h2>'
-            '<p style="font-size:var(--font-size-2xl);margin:0">—</p></article>'
-            for i, name in enumerate(("Ventas", "Pedidos", "Clientes", "Incidencias"))
-        )
-        body = f'<h1>Panel</h1><section class="grid" aria-label="Indicadores">{cards}</section>'
-        components, with_nav = ["Navbar", "Card"], True
-    elif screen == "list":
-        rows = "".join(
-            f'<tr><td>Elemento {i}</td><td>Activo</td><td><a href="#">Ver<span class="sr-only"> elemento {i}</span></a></td></tr>'
-            for i in range(1, 4)
-        )
-        body = (
-            '<h1>Listado</h1><form role="search" class="field" style="max-width:360px"><label for="q">Buscar</label>'
-            '<input id="q" type="search" name="q"></form><div class="card"><table><caption class="sr-only">Elementos</caption>'
-            '<thead><tr><th scope="col">Nombre</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead>'
-            f'<tbody>{rows}</tbody></table></div>'
-        )
-        components, with_nav = ["Navbar", "TextField", "DataTable"], True
-    else:
-        body = (
-            '<h1>Nuevo registro</h1><form class="card" method="post" style="max-width:640px">'
-            '<div class="field"><label for="n">Nombre <span aria-hidden="true">*</span></label>'
-            '<input id="n" name="nombre" required aria-required="true"></div>'
-            '<div class="field"><label for="e">Correo</label><input id="e" name="correo" type="email" autocomplete="email"></div>'
-            '<div class="field"><label for="t">Tipo</label><select id="t" name="tipo">'
-            '<option>General</option><option>Prioritario</option></select></div>'
-            '<div style="display:flex;gap:var(--space-sm)"><button class="btn" type="submit">Guardar</button>'
-            '<button class="btn btn--secondary" type="reset">Cancelar</button></div></form>'
-        )
-        components, with_nav = ["Navbar", "TextField", "Select", "Button"], True
-    titles = {"login": "Iniciar sesión", "dashboard": "Panel", "list": "Listado", "form": "Formulario"}
-    document = _shell(titles[screen], app, lang, css, body, with_nav)
-    return {"pantalla": screen, "componentes_usados": components, "html": document, "bytes": len(document.encode("utf-8"))}

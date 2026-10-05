@@ -61,6 +61,7 @@ Sentinel, Nexus, Synapse, Matrix, Aurora, Vector, Prism, Orbit, Insight y Genesi
 ```powershell
 venv\Scripts\python.exe scripts\apply_sql_migration.py SENTINEL_SCHEMA_PHASE2.sql
 venv\Scripts\python.exe scripts\apply_sql_migration.py NEXUS_MATRIX_SCHEMA.sql
+venv\Scripts\python.exe scripts\apply_sql_migration.py NEXUS_APLICACIONES_SCHEMA.sql
 venv\Scripts\python.exe scripts\apply_sql_migration.py PLATFORM_AGENTS_SCHEMA.sql
 venv\Scripts\python.exe scripts\apply_sql_migration.py SYNAPSE_GENESIS_SCHEMA.sql
 ```

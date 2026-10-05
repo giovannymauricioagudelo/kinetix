@@ -106,6 +106,7 @@ class OrchestrationRequest:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
+    data_model: Optional[str] = None
 
     def to_dict(self) -> Dict[str, object]:
         if self.status == RequestStatus.NEEDS_CLARIFICATION:
@@ -121,6 +122,7 @@ class OrchestrationRequest:
             "tipo_solicitud": self.request_type.value if self.request_type else None,
             "complejidad": self.complexity.value if self.complexity else None,
             "capacidades_detectadas": self.capabilities,
+            "modelo_datos": self.data_model,
             "estado": self.status.value,
             "preguntas_pendientes": [q.to_dict() for q in self.pending_questions],
             "respuestas": self.answers,
@@ -225,6 +227,31 @@ Q_SCOPE = Question(
     "¿Qué áreas abarca: datos, integraciones con otros sistemas, reglas de negocio, reportes, interfaz, IA, seguridad o monitoreo?",
     "No se detectó qué partes de la aplicación están involucradas.",
 )
+Q_DATA_MODEL = Question(
+    "modelo_datos",
+    "¿Cómo se separan los datos de cada empresa: 'una base por empresa' (base independiente por cliente) o "
+    "'multiempresa' (una sola base compartida con id_empresa)? Si solo habrá una empresa responde 'no aplica'.",
+    "Nexus crea la base de datos independiente de la aplicación y despliega los objetos según este modelo.",
+)
+
+DATA_MODEL_HINTS: Tuple[Tuple[str, str], ...] = (
+    ("multiempresa", "multiempresa"), ("multi empresa", "multiempresa"), ("multitenant", "multiempresa"),
+    ("compartida", "multiempresa"), ("una sola base", "multiempresa"),
+    ("por empresa", "por_empresa"), ("por cliente", "por_empresa"), ("independiente", "por_empresa"),
+    ("separada", "por_empresa"), ("no aplica", "por_empresa"), ("una sola empresa", "por_empresa"),
+)
+DATA_MODEL_LABELS = {
+    "por_empresa": "una base de datos por empresa ({app}_{empresa})",
+    "multiempresa": "una base multiempresa ({app}) con id_empresa y seguridad por fila",
+}
+
+
+def data_model_from(answer: str) -> Optional[str]:
+    normalized = _normalize(answer)
+    for hint, model in DATA_MODEL_HINTS:
+        if hint in normalized:
+            return model
+    return None
 
 TIER_ORDER = {Complexity.LOW: 0, Complexity.MEDIUM: 1, Complexity.HIGH: 2}
 
@@ -233,10 +260,10 @@ QUESTION_BANK: Dict[RequestType, List[Tuple[Complexity, Question]]] = {
         (Complexity.LOW, Question("objetivo", "¿Qué problema de negocio resuelve la aplicación?", "Define el alcance funcional.")),
         (Complexity.LOW, Question("usuarios_roles", "¿Quiénes la van a usar y con qué roles (administrador, cliente, técnico…)?", "Define permisos y flujos por rol.")),
         (Complexity.LOW, Question("plataformas", "¿En qué plataformas debe funcionar: web, móvil, escritorio o solo API?", "Define si interviene Aurora y qué entregables de interfaz.")),
+        (Complexity.LOW, Q_DATA_MODEL),
         (Complexity.MEDIUM, Question("volumen", "¿Cuántos usuarios concurrentes y transacciones por día esperas?", "Dimensiona base de datos e infraestructura.")),
         (Complexity.MEDIUM, Question("integraciones", "¿Con qué sistemas externos debe integrarse (ERP, pagos, correo…)?", "Define el trabajo de Synapse.")),
         (Complexity.MEDIUM, Question("datos_existentes", "¿Hay datos existentes que migrar? ¿De qué sistema?", "Define si Nexus debe planear una migración.")),
-        (Complexity.HIGH, Question("multiempresa", "¿Debe soportar varias empresas o sedes con datos separados?", "Cambia el modelo de datos y la seguridad.")),
         (Complexity.HIGH, Question("cumplimiento", "¿Aplica alguna normativa (DIAN, habeas data, PCI, auditoría)?", "Agrega reglas y controles obligatorios.")),
         (Complexity.HIGH, Question("disponibilidad", "¿Qué disponibilidad se exige (horario laboral, 24/7, SLA)?", "Define la estrategia de despliegue de Orbit.")),
         (Complexity.HIGH, Question("plazo_presupuesto", "¿Cuál es el plazo y el presupuesto disponible?", "Permite priorizar y dividir en fases.")),
@@ -301,6 +328,12 @@ DEFAULT_ACTIONS: Dict[str, str] = {
 }
 
 TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
+    RequestType.NEW_APP: {
+        NEXUS.codename: ("Registrar la aplicación en kinetix con {modelo}, crear su base de datos independiente "
+                         "y desplegar tablas y migraciones según ese modelo."),
+        AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación, tablero, listados con "
+                          "filtros y exportación, formularios por secciones, detalle y configuración."),
+    },
     RequestType.SCALE: {
         NEXUS.codename: "Analizar consultas lentas; proponer índices, particionamiento y pools de conexión.",
         SYNAPSE.codename: "Agregar caché y rate limiting en las APIs más cargadas.",
@@ -410,13 +443,18 @@ class OrchestratorAgent:
             name for name, (_, keywords) in CAPABILITIES.items() if _contains_any(corpus, keywords)
         ]
         request.complexity = self._complexity(request.request_type, request.capabilities, corpus)
+        request.data_model = None
+        if request.request_type == RequestType.NEW_APP and Q_DATA_MODEL.id in request.answers:
+            request.data_model = data_model_from(request.answers[Q_DATA_MODEL.id])
+            if request.data_model is None:
+                request.answers.pop(Q_DATA_MODEL.id)
         request.pending_questions = self._questions_for(request)
 
         if request.pending_questions:
             request.plan = []
             request.status = RequestStatus.NEEDS_CLARIFICATION
         else:
-            request.plan = self._build_plan(request.request_type, request.capabilities)
+            request.plan = self._build_plan(request.request_type, request.capabilities, request.data_model)
             request.status = RequestStatus.PLAN_PROPOSED
 
     def _resolve_type(self, request: OrchestrationRequest, description: str) -> Optional[RequestType]:
@@ -464,7 +502,8 @@ class OrchestratorAgent:
         return [q for q in questions if q.id not in request.answers]
 
     @staticmethod
-    def _build_plan(request_type: RequestType, capabilities: List[str]) -> List[PlanTask]:
+    def _build_plan(request_type: RequestType, capabilities: List[str],
+                    data_model: Optional[str] = None) -> List[PlanTask]:
         included = {CAPABILITIES[name][0].codename for name in capabilities}
         included.update(agent.codename for agent in ALWAYS_INCLUDED)
         included.update(agent.codename for agent in INCLUDED_BY_TYPE.get(request_type, ()))
@@ -481,7 +520,8 @@ class OrchestratorAgent:
                 PlanTask(
                     id=f"{agent.codename.lower()}_01",
                     agent=agent,
-                    accion=actions.get(agent.codename, DEFAULT_ACTIONS[agent.codename]),
+                    accion=actions.get(agent.codename, DEFAULT_ACTIONS[agent.codename]).replace(
+                        "{modelo}", DATA_MODEL_LABELS.get(data_model or "", "el modelo de datos acordado")),
                     depends_on=depends_on,
                 )
             )

@@ -95,7 +95,57 @@ def test_exports_layouts_and_screens(aurora):
     assert "@media" in json.dumps(layout)
     screen = aurora.screen(sid, "gio", "login", "<script>alert(1)</script>", "es")
     assert "&lt;script&gt;" in screen["html"] and "<script>alert" not in screen["html"]
-    assert 'class="skip-link"' in screen["html"]
+    assert 'class="kx-skip"' in screen["html"] and 'data-kx-reveal="f-contrasena"' in screen["html"]
+
+
+@pytest.mark.parametrize("tipo, esperado", [
+    ("dashboard", ('class="kx-kpis"', 'role="img"', "kx-feed", "data-kx-theme")),
+    ("list", ("data-kx-table", "data-kx-export", 'aria-sort="none"', 'id="kx-bulk"', 'id="kx-empty"', 'id="kx-delete"')),
+    ("form", ("data-kx-validate", "<fieldset>", "kx-actionbar", 'id="kx-discard"')),
+    ("detail", ('role="tablist"', 'role="tabpanel"', "kx-timeline")),
+    ("settings", ('role="switch"', 'id="s-idioma"')),
+])
+def test_screens_use_the_app_shell_and_add_functionality(aurora, tipo, esperado):
+    sid = aurora.create_system("ana", "gio", {"nombre": f"S-{tipo}"})["id_sistema"]
+    screen = aurora.screen(sid, "gio", tipo, "Talleres", "es")
+    page = screen["html"]
+    assert 'class="kx-shell"' in page and 'aria-current="page"' in page and 'aria-label="Breadcrumb"' in page
+    assert all(fragment in page for fragment in esperado)
+    assert screen["funcionalidades"] and "Sidebar" in screen["componentes_usados"]
+    assert 'id="kx-company"' not in page
+
+
+def test_screen_options_customize_entity_fields_and_companies(aurora):
+    sid = aurora.create_system("ana", "gio", {"nombre": "Opciones"})["id_sistema"]
+    options = {
+        "entidad": "Vehículo", "entidad_plural": "Vehículos", "multiempresa": True,
+        "empresas": ["Taller <Centro>", "Taller Sur"], "usuario": "Giovanny Agudelo",
+        "campos": [{"nombre": "placa", "etiqueta": "Placa", "requerido": True},
+                   {"nombre": "kilometraje", "etiqueta": "Kilometraje", "tipo": "number"},
+                   {"nombre": "servicio", "etiqueta": "Servicio", "tipo": "select", "opciones": ["Aceite", "Frenos"]}],
+        "columnas": ["placa", "servicio"],
+    }
+    listing = aurora.screen(sid, "gio", "list", "Talleres", "es", options)
+    page = listing["html"]
+    assert "Vehículos" in page and ">Placa" in page and "Kilometraje" not in page
+    assert 'id="kx-company"' in page and "Taller &lt;Centro&gt;" in page and ">GA<" in page
+    assert listing["opciones_aplicadas"]["columnas"] == ["placa", "servicio"]
+    form = aurora.screen(sid, "gio", "form", "Talleres", "es", options)["html"]
+    assert 'id="f-placa"' in form and 'type="number"' in form and "<option>Frenos</option>" in form
+
+    for bad in ({"campos": [{"nombre": "Mal Nombre"}]}, {"columnas": ["inexistente"]},
+                {"campos": [{"nombre": "x", "tipo": "archivo"}]}, {"multiempresa": "si"}):
+        with pytest.raises(InvalidInputError):
+            aurora.screen(sid, "gio", "list", "Talleres", "es", bad)
+
+
+def test_screens_are_translated(aurora):
+    sid = aurora.create_system("ana", "gio", {"nombre": "Idiomas"})["id_sistema"]
+    english = aurora.screen(sid, "gio", "list", "Shop", "en")["html"]
+    assert '<html lang="en">' in english and "Export CSV" in english and "Exportar CSV" not in english
+    assert "Exportar CSV" in aurora.screen(sid, "gio", "list", "Loja", "pt")["html"]
+    with pytest.raises(InvalidInputError):
+        aurora.screen(sid, "gio", "list", "Shop", "fr")
 
 
 @pytest.fixture
@@ -121,5 +171,9 @@ def test_api_requires_permissions_and_audits(api):
     assert download.headers["content-disposition"].startswith("attachment")
     assert client.post("/api/v1/aurora/contraste", json={"color_texto": "#000000", "color_fondo": "#FFFFFF"},
                        headers=auth).json()["relacion"] == 21
+    screen = client.post(f"/api/v1/aurora/sistemas/{sid}/pantallas", headers=auth, json={
+        "tipo": "detail", "nombre_app": "Citas", "opciones": {"entidad": "Cita", "campos": [{"nombre": "paciente"}]}})
+    assert screen.status_code == 200 and screen.json()["opciones_aplicadas"]["campos"] == ["paciente"]
+    assert "detail" in client.get("/api/v1/aurora/info", headers=auth).json()["pantallas"]
     _, entries = repo.list_audit("gio", None, None, None, None, None, 50, 0)
     assert "aurora_sistema_crear" in {e.accion for e in entries}

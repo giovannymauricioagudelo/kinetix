@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from src.agents.agent_catalog import AURORA, openapi_tag
-from src.agents.interface_design_agent import design, exporters
+from src.agents.interface_design_agent import design, exporters, screens
 from src.agents.interface_design_agent.dependencies import get_aurora_service
 from src.agents.interface_design_agent.service import VERSION, AuroraService
 from src.agents.security_agent.dependencies import get_security_service, require_permission, translate_errors
@@ -71,10 +71,31 @@ class LayoutBody(BaseModel):
     clase: str = "kx-layout"
 
 
+class ScreenFieldBody(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=40, description="Minúsculas, números o '_'")
+    etiqueta: Optional[str] = Field(None, max_length=60)
+    tipo: str = Field("text", description=", ".join(screens.FIELD_TYPES))
+    requerido: bool = False
+    opciones: List[str] = Field(default_factory=list, max_length=screens.MAX_OPTIONS)
+
+
+class ScreenOptionsBody(BaseModel):
+    entidad: Optional[str] = Field(None, max_length=40, description="Singular, p. ej. Cliente")
+    entidad_plural: Optional[str] = Field(None, max_length=40)
+    campos: Optional[List[ScreenFieldBody]] = Field(None, max_length=screens.MAX_FIELDS)
+    columnas: Optional[List[str]] = Field(None, max_length=8, description="Campos visibles en el listado")
+    modulos: Optional[List[str]] = Field(None, max_length=screens.MAX_MODULES, description="Entradas de la barra lateral")
+    multiempresa: bool = Field(False, description="Muestra el selector de empresa")
+    empresas: Optional[List[str]] = Field(None, max_length=screens.MAX_COMPANIES)
+    usuario: Optional[str] = Field(None, max_length=60)
+    kpis: Optional[List[str]] = Field(None, max_length=screens.MAX_KPIS)
+
+
 class ScreenBody(BaseModel):
-    tipo: str = Field(..., description="login, dashboard, list o form")
+    tipo: str = Field(..., description=", ".join(screens.SCREEN_TYPES))
     nombre_app: str = Field(..., min_length=1, max_length=80)
-    idioma: str = "es"
+    idioma: str = Field("es", description="es, en o pt")
+    opciones: Optional[ScreenOptionsBody] = None
 
 
 class ContrastBody(BaseModel):
@@ -100,7 +121,10 @@ def aurora_info() -> Dict[str, Any]:
         "tipos_componente": list(design.COMPONENT_TYPES),
         "formatos_exportacion": list(exporters.EXPORT_FORMATS),
         "layouts": list(exporters.LAYOUT_TYPES),
-        "pantallas": list(exporters.SCREEN_TYPES),
+        "pantallas": list(screens.SCREEN_TYPES),
+        "funcionalidades_pantallas": screens.FEATURES,
+        "tipos_campo": list(screens.FIELD_TYPES),
+        "idiomas": list(screens.LANGUAGES),
         "puntos_de_quiebre": design.BREAKPOINTS,
         "permisos": {"ver": PERM_VIEW, "gestionar": PERM_MANAGE},
     }
@@ -237,7 +261,8 @@ def generate_screen(
     service: AuroraService = Depends(get_aurora_service),
 ):
     with translate_errors(UNAVAILABLE):
-        result = service.screen(id_sistema, principal.id_empresa, body.tipo, body.nombre_app, body.idioma)
+        options = body.opciones.model_dump(exclude_none=True) if body.opciones else None
+        result = service.screen(id_sistema, principal.id_empresa, body.tipo, body.nombre_app, body.idioma, options)
     if descargar:
         return attachment(result["html"], f"{result['pantalla']}.html", exporters.MEDIA_TYPES["html"])
     return ok(result)

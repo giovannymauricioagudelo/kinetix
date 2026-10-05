@@ -1,0 +1,57 @@
+================================================================================
+ARCHIVO CORREGIDO - COPIAR A TU PROYECTO
+================================================================================
+
+El archivo src_api_main_scalable.py tenía un error:
+
+ANTES (incorrecto):
+  from fastapi.middleware.gzip import GZIPMiddleware  <- INCORRECTO
+  app.add_middleware(GZIPMiddleware, minimum_size=1000)
+
+DESPUES (correcto):
+  from fastapi.middleware.gzip import GZipMiddleware  <- CORRECTO
+  app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+================================================================================
+COMO COPIAR (3 OPCIONES)
+================================================================================
+
+OPCION 1: DESCARGAR EL ARCHIVO CORREGIDO
+
+- Descarga: src_api_main_scalable.py (YA ESTA CORREGIDO en /outputs/)
+- Cópialo a: D:\Desarrollo\kinetix-studio\src\api\main_scalable.py
+- Reemplaza el archivo viejo
+
+OPCION 2: EDITAR MANUALMENTE
+
+En PowerShell, abre el archivo en Notepad:
+
+notepad D:\Desarrollo\kinetix-studio\src\api\main_scalable.py
+
+Busca (Ctrl+H):
+  - Buscar: GZIPMiddleware
+  - Reemplazar: GZipMiddleware
+  - Reemplazar todos (2 coincidencias)
+
+Guarda (Ctrl+S)
+
+OPCION 3: COMANDO POWERSHELL
+
+Si quieres que lo corrija automaticamente, ejecuta esto en PowerShell:
+
+(Get-Content "src\api\main_scalable.py") -replace "GZIPMiddleware", "GZipMiddleware" | Set-Content "src\api\main_scalable.py"
+
+================================================================================
+DESPUES DE COPIAR/EDITAR
+================================================================================
+
+Intenta ejecutar de nuevo:
+
+uvicorn src.api.main_scalable:app --reload
+
+Deberia ver:
+
+INFO:     Uvicorn running on http://127.0.0.1:8000
+INFO:     Application startup complete
+
+================================================================================

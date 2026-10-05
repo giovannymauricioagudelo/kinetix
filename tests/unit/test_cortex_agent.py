@@ -66,8 +66,30 @@ def test_complex_new_app_is_high_and_asks_more_questions(cortex):
     assert request.request_type == RequestType.NEW_APP
     assert request.complexity == Complexity.HIGH
     pending = _pending_ids(request)
-    assert {"multiempresa", "cumplimiento", "plazo_presupuesto"} <= set(pending)
+    assert {"modelo_datos", "cumplimiento", "plazo_presupuesto"} <= set(pending)
     assert request.status == RequestStatus.NEEDS_CLARIFICATION
+
+
+@pytest.mark.parametrize("answer, model", [
+    ("Una base por empresa", "por_empresa"),
+    ("multiempresa con datos separados", "multiempresa"),
+    ("una sola base compartida", "multiempresa"),
+    ("no aplica", "por_empresa"),
+])
+def test_new_app_data_model_drives_nexus_task(cortex, answer, model):
+    request = cortex.submit("Crear una aplicación nueva de citas con pantallas web")
+    assert "modelo_datos" in _pending_ids(request)
+    request = cortex.answer(request.id, {"modelo_datos": answer})
+    request = _answer_all(cortex, request)
+    assert request.data_model == model and request.to_dict()["modelo_datos"] == model
+    nexus = next(t for t in request.plan if t.agent.codename == "Nexus")
+    assert ("{app}_{empresa}" if model == "por_empresa" else "id_empresa") in nexus.accion
+
+
+def test_unclear_data_model_is_asked_again(cortex):
+    request = cortex.submit("Crear una aplicación nueva de citas con pantallas web")
+    request = cortex.answer(request.id, {"modelo_datos": "lo que sea"})
+    assert "modelo_datos" in _pending_ids(request) and request.data_model is None
 
 
 def test_no_plan_until_questions_answered(cortex):

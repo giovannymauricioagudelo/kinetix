@@ -1,4 +1,4 @@
-"""Instancia compartida de NexusService para la API (NEXUS_CATALOG=memory para desarrollo sin SQL Server)."""
+"""Instancias compartidas de NexusService y NexusAppService (NEXUS_CATALOG=memory para desarrollo sin SQL Server)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ import os
 import threading
 from typing import Optional
 
+from src.agents.database_agent.app_registry import InMemoryAppRegistry
+from src.agents.database_agent.app_service import NexusAppService
 from src.agents.database_agent.catalog import InMemoryCatalog
+from src.agents.database_agent.provisioner import InMemoryProvisioner
 from src.agents.database_agent.service import NexusService
 
 logger = logging.getLogger(__name__)
@@ -50,3 +53,36 @@ def get_nexus_service() -> NexusService:
 def set_nexus_service(service: Optional[NexusService]) -> None:
     global _service
     _service = service
+
+
+_apps_service: Optional[NexusAppService] = None
+
+
+def build_default_apps_service() -> NexusAppService:
+    if os.getenv("NEXUS_CATALOG", "sqlserver").strip().lower() == "memory":
+        logger.warning("Nexus usa un registro de aplicaciones en memoria: no se crean bases reales.")
+        return NexusAppService(InMemoryAppRegistry(), InMemoryProvisioner())
+    from src.agents.database_agent.app_registry import SqlServerAppRegistry
+    from src.agents.database_agent.provisioner import SqlServerProvisioner
+    from src.agents.security_agent.config import load_sqlserver_settings
+    from src.agents.sqlserver import SqlServerClient
+
+    settings = load_sqlserver_settings()
+    registry = SqlServerAppRegistry(SqlServerClient(settings, _int_env("NEXUS_QUERY_TIMEOUT_SECONDS", 30)))
+    provisioner = SqlServerProvisioner(settings, _int_env("NEXUS_DEPLOY_TIMEOUT_SECONDS", 120),
+                                       _int_env("NEXUS_DEPLOY_LOCK_TIMEOUT_MS", 30000))
+    return NexusAppService(registry, provisioner)
+
+
+def get_nexus_apps_service() -> NexusAppService:
+    global _apps_service
+    if _apps_service is None:
+        with _lock:
+            if _apps_service is None:
+                _apps_service = build_default_apps_service()
+    return _apps_service
+
+
+def set_nexus_apps_service(service: Optional[NexusAppService]) -> None:
+    global _apps_service
+    _apps_service = service

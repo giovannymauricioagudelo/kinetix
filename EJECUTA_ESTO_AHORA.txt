@@ -1,0 +1,87 @@
+===============================================================================
+KINETIX STUDIO - EJECUTA ESTO AHORA (5 segundos)
+===============================================================================
+
+TIENES 2 OPCIONES:
+
+===============================================================================
+OPCION 1: SCRIPT SIMPLE (Recomendado - Acaba de fallar el anterior)
+===============================================================================
+
+Tu PowerShell ya tiene el venv activado. Solo ejecuta:
+
+.\SETUP_KINETIX_SIMPLE.ps1
+
+(Sin parametros, usa "dev" por defecto)
+
+O con parametro:
+
+.\SETUP_KINETIX_SIMPLE.ps1 -Environment "dev"
+
+===============================================================================
+OPCION 2: INSTALAR MANUALMENTE (Mas rapido si solo quieres empezar)
+===============================================================================
+
+Ya tienes el venv activado ((venv) en el prompt), solo ejecuta:
+
+pip install fastapi uvicorn asyncpg aioodbc redis aioredis aio-pika==10.0.4 pydantic slowapi pybreaker tenacity prometheus-client
+
+(Toma 2-3 minutos)
+
+Luego:
+
+uvicorn src.api.main_scalable:app --reload
+
+===============================================================================
+SALIDA ESPERADA (Opcion 1 o 2)
+===============================================================================
+
+[1/6] Validando Python...
+Python 3.9.7
+OK
+
+[2/6] Creando carpetas...
+OK
+
+[3/6] Configurando venv...
+OK
+
+[4/6] Instalando dependencias...
+OK
+
+[5/6] Copiando archivos de codigo...
+OK
+
+[6/6] Configurando .env...
+OK
+
+============================================================================
+SETUP COMPLETO!
+============================================================================
+
+Ejecuta ahora:
+uvicorn src.api.main_scalable:app --reload
+
+Luego abre en navegador:
+http://localhost:8000/api/docs
+
+===============================================================================
+IMPORTANTE
+===============================================================================
+
+- Si el script falla, usa OPCION 2 (instalar manualmente)
+- Ya tienes venv activado, eso es BUENO
+- Los archivos src_*.py deben estar en D:\Desarrollo\kinetix-studio\
+- Si falta alguno, el script los saltara (OMITIDO)
+
+===============================================================================
+AHORA EJECUTA ESTO EN TU POWERSHELL:
+===============================================================================
+
+.\SETUP_KINETIX_SIMPLE.ps1
+
+O simplemente:
+
+pip install fastapi uvicorn asyncpg aioodbc redis aioredis aio-pika==10.0.4 pydantic slowapi pybreaker tenacity
+
+===============================================================================

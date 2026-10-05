@@ -6,7 +6,7 @@ import re
 from typing import Any, Callable, Dict, Optional
 
 from src.agents.common import iso, new_id, utcnow
-from src.agents.interface_design_agent import design, exporters
+from src.agents.interface_design_agent import design, exporters, screens
 from src.agents.interface_design_agent.design import DesignError
 from src.agents.interface_design_agent.repository import DesignRepository, DesignSystem
 from src.agents.security_agent.models import ConflictError, InvalidInputError, NotFoundError
@@ -194,12 +194,13 @@ class AuroraService:
         except DesignError as e:
             raise _invalid(e)
 
-    def screen(self, id_sistema: str, id_empresa: str, tipo: str, nombre_app: str, idioma: str) -> Dict[str, Any]:
+    def screen(self, id_sistema: str, id_empresa: str, tipo: str, nombre_app: str, idioma: str,
+               opciones: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         system = self._get(id_sistema, id_empresa)
-        if not 1 <= len(nombre_app or "") <= 80:
+        if not 1 <= len((nombre_app or "").strip()) <= 80:
             raise InvalidInputError("nombre_app es obligatorio (máx. 80 caracteres)")
         try:
-            return exporters.screen_html(system.tokens, tipo, nombre_app, idioma)
+            return screens.screen_html(system.tokens, tipo, nombre_app.strip(), idioma, opciones)
         except DesignError as e:
             raise _invalid(e)
 

@@ -1,0 +1,138 @@
+================================================================================
+KINETIX STUDIO v5.0.0 - HOJA RAPIDA SETUP (COPIA Y PEGA)
+================================================================================
+
+UBICACION: D:\Desarrollo\kinetix-studio
+
+================================================================================
+PASO 1: ABRE POWERSHELL AQUI
+================================================================================
+
+En Windows Explorer:
+1. Ve a: D:\Desarrollo\kinetix-studio
+2. Presiona: Shift + Click derecho en la carpeta vacia
+3. Selecciona: "Open PowerShell window here"
+
+(O abre PowerShell como Administrador: Win + X → PowerShell Admin)
+
+================================================================================
+PASO 2: HABILITAR SCRIPTS (SOLO PRIMERA VEZ)
+================================================================================
+
+Copia y pega en PowerShell:
+
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+
+Presiona Enter. Deberia decir "Execution Policy changed"
+
+================================================================================
+PASO 3: DESBLOQUEAR EL SCRIPT
+================================================================================
+
+Copia y pega:
+
+Unblock-File -Path ".\SETUP_IMPLEMENTACION_PRODUCTION.ps1"
+
+Presiona Enter.
+
+================================================================================
+PASO 4: EJECUTAR EL SETUP
+================================================================================
+
+Copia y pega UNA DE ESTAS OPCIONES:
+
+Para DEVELOPMENT (recomendado para comenzar):
+.\SETUP_IMPLEMENTACION_PRODUCTION.ps1 -Environment "dev"
+
+O simplemente:
+.\SETUP_IMPLEMENTACION_PRODUCTION.ps1
+
+Presiona Enter y ESPERA (tomara 2-5 minutos).
+
+Deberia ver:
+  [STEP 1] Validando ambiente...
+  [STEP 2] Creando estructura de carpetas...
+  [STEP 3] Configurando Virtual Environment...
+  [STEP 4] Instalando dependencias...
+  [STEP 5] Copiando archivos de codigo...
+  [STEP 6] Configurando variables de entorno...
+  [STEP 7] Verificaciones finales...
+  ============================================================================
+  SETUP COMPLETO!
+  ============================================================================
+
+================================================================================
+PASO 5: INICIAR LA API
+================================================================================
+
+Una vez que el setup termine, ejecuta:
+
+uvicorn src.api.main_scalable:app --reload
+
+Deberia ver:
+  INFO:     Uvicorn running on http://127.0.0.1:8000
+  INFO:     Application startup complete
+
+================================================================================
+PASO 6: VERIFICAR EN NAVEGADOR
+================================================================================
+
+Abre en tu navegador (copiar y pegar en la barra de direcciones):
+
+http://localhost:8000/api/docs
+
+Deberia ver SWAGGER UI con todos los endpoints listados.
+
+================================================================================
+TROUBLESHOOTING RAPIDO
+================================================================================
+
+Si dice "file not found":
+- Asegurate de estar en D:\Desarrollo\kinetix-studio
+- Ejecuta: ls *.ps1 (debe listar SETUP_IMPLEMENTACION_PRODUCTION.ps1)
+
+Si dice "not digitally signed":
+- Ejecuta: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+- Luego: Unblock-File -Path ".\SETUP_IMPLEMENTACION_PRODUCTION.ps1"
+
+Si falla instalacion de aio-pika:
+- Ejecuta: pip install aio-pika==10.0.4 --force-reinstall
+
+Si no encuentra fastapi:
+- Verifica que venv esta activado (debe decir (venv) al inicio del prompt)
+- Ejecuta: pip install -r requirements-scalability-FINAL.txt
+
+Si uvloop error:
+- Es normal en Windows. El script ya lo omite.
+
+================================================================================
+ARCHIVOS QUE NECESITAS EN D:\Desarrollo\kinetix-studio
+================================================================================
+
+Descargar de /mnt/user-data/outputs/ (via Firefox, navegador):
+
+1. SETUP_IMPLEMENTACION_PRODUCTION.ps1 ← El script
+2. requirements-scalability-FINAL.txt ← Las dependencias
+3. src_api_main_scalable.py ← Codigo API
+4. src_api_routes_database_scalable.py ← Rutas DB
+5. src_utils_circuit_breaker.py ← Componente
+6. src_utils_cache_manager.py ← Componente
+7. src_utils_database_pools.py ← Componente
+
+O simplemente ejecuta el script y te dira cuales faltan.
+
+================================================================================
+DESPUES DE QUE FUNCIONE
+================================================================================
+
+1. Abre: http://localhost:8000/api/docs (explorar la API)
+2. Abre: http://localhost:8000/health (verificar salud)
+3. Abre: http://localhost:8000/metrics/all (ver metricas)
+
+Lee: EJECUTAR_SETUP_AHORA.md para proximos pasos de escalabilidad.
+
+================================================================================
+LISTO!
+================================================================================
+
+Ejecuta el script y dimple si tienes problemas. Comparteme la salida exacta.

@@ -304,9 +304,12 @@ def merge_tokens(current: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str
 COMPONENT_TYPES = (
     "button", "input", "select", "checkbox", "radio", "switch", "card", "modal", "navbar", "tabs",
     "table", "list", "alert", "tooltip", "datepicker", "badge", "avatar", "link", "icon_button",
+    "sidebar", "breadcrumbs", "pagination", "toast", "dropdown", "stepper", "empty_state", "kpi", "chart", "search",
+    "textarea",
 )
-INTERACTIVE = frozenset({"button", "input", "select", "checkbox", "radio", "switch", "tabs", "datepicker", "link", "icon_button"})
-NEEDS_LABEL = frozenset({"input", "select", "checkbox", "radio", "switch", "datepicker", "icon_button"})
+INTERACTIVE = frozenset({"button", "input", "select", "checkbox", "radio", "switch", "tabs", "datepicker", "link",
+                         "icon_button", "pagination", "dropdown", "search", "textarea"})
+NEEDS_LABEL = frozenset({"input", "select", "checkbox", "radio", "switch", "datepicker", "icon_button", "search", "textarea"})
 COMPONENT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,59}$")
 STATE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,29}$")
 
@@ -338,6 +341,32 @@ DEFAULT_COMPONENTS: Tuple[Dict[str, Any], ...] = (
      "propiedades": {"encabezados_th": True, "caption": True}},
     {"nombre": "Alert", "tipo": "alert", "variantes": ["info", "success", "warning", "error"], "estados": ["default"],
      "propiedades": {"rol_aria": "alert", "no_solo_color": True}},
+    {"nombre": "Sidebar", "tipo": "sidebar", "variantes": ["expanded", "collapsed"], "estados": ["default", "collapsed", "mobile_open"],
+     "propiedades": {"landmark": "navigation", "aria_current": True, "colapsable": True}},
+    {"nombre": "Breadcrumbs", "tipo": "breadcrumbs", "variantes": ["default"], "estados": ["default"],
+     "propiedades": {"landmark": "navigation", "aria_current": True}},
+    {"nombre": "SearchField", "tipo": "search", "variantes": ["global", "inline"], "estados": ["default", "focus", "disabled"],
+     "propiedades": {"min_alto_px": 44, "etiqueta_accesible": True, "rol_aria": "search", "atajo_teclado": "/"}},
+    {"nombre": "Dropdown", "tipo": "dropdown", "variantes": ["menu", "select"], "estados": ["default", "focus", "open"],
+     "propiedades": {"min_alto_px": 44, "aria_expanded": True, "cierra_con_escape": True}},
+    {"nombre": "Pagination", "tipo": "pagination", "variantes": ["default", "compact"], "estados": ["default", "focus", "disabled"],
+     "propiedades": {"min_alto_px": 44, "min_ancho_px": 44, "landmark": "navigation"}},
+    {"nombre": "Toast", "tipo": "toast", "variantes": ["info", "success", "warning", "error"], "estados": ["visible", "hidden"],
+     "propiedades": {"rol_aria": "status", "aria_live": "polite", "no_solo_color": True, "duracion_ms": 5000}},
+    {"nombre": "Badge", "tipo": "badge", "variantes": ["neutral", "success", "warning", "error", "info"], "estados": ["default"],
+     "propiedades": {"no_solo_color": True}},
+    {"nombre": "Avatar", "tipo": "avatar", "variantes": ["initials", "image"], "estados": ["default"],
+     "propiedades": {"texto_alternativo": True}},
+    {"nombre": "Kpi", "tipo": "kpi", "variantes": ["default", "trend"], "estados": ["default", "loading"],
+     "propiedades": {"tendencia_con_texto": True}},
+    {"nombre": "Chart", "tipo": "chart", "variantes": ["line", "bar"], "estados": ["default", "loading", "empty"],
+     "propiedades": {"descripcion_textual": True, "rol_aria": "img"}},
+    {"nombre": "EmptyState", "tipo": "empty_state", "variantes": ["default"], "estados": ["default"],
+     "propiedades": {"accion_principal": True}},
+    {"nombre": "Stepper", "tipo": "stepper", "variantes": ["horizontal", "vertical"], "estados": ["default", "current", "complete"],
+     "propiedades": {"aria_current": True}},
+    {"nombre": "TextArea", "tipo": "textarea", "variantes": ["outlined"], "estados": ["default", "focus", "error", "disabled"],
+     "propiedades": {"min_alto_px": 88, "etiqueta_accesible": True, "mensaje_error_asociado": True}},
 )
 
 

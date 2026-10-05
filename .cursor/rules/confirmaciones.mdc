@@ -1,0 +1,18 @@
+---
+description: Palabras que el usuario usa para confirmar decisiones de la fábrica de aplicaciones
+alwaysApply: true
+---
+
+# Confirmaciones del usuario
+
+`confirmado` equivale a `sí` / `si` en toda la fábrica de aplicaciones (también `confirmo` y `aprobado`).
+
+Aplica cuando se le pide al usuario una decisión, por ejemplo:
+
+- Enviar respuestas a Cortex o aprobar un plan (`POST /requests/{id}/approve`, aprobado por `giovanny`).
+- Arrancar las tareas de un plan aprobado (Nexus, Aurora, Vector…).
+- Operaciones git destructivas de `git-sync-keywords.mdc` (`reset --hard`, `clean`).
+
+Ejemplo: "¿Apruebo el plan?" → usuario: "confirmado" → aprobar sin volver a preguntar.
+
+Una confirmación aplica solo a lo que se preguntó justo antes; no autoriza otras acciones (commit, push, borrar datos) que no estaban en la pregunta.
