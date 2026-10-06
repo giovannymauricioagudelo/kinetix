@@ -4,6 +4,8 @@ from .agent import (
     OrchestratorAgent,
     RequestStatus,
     RequestType,
+    Sprint,
+    SprintStatus,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     "OrchestratorAgent",
     "RequestStatus",
     "RequestType",
+    "Sprint",
+    "SprintStatus",
 ]

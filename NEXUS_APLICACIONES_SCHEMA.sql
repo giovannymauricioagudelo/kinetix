@@ -96,6 +96,62 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_nexus_despliegues_app
     CREATE INDEX idx_nexus_despliegues_app_fecha ON dbo.nexus_despliegues(id_aplicacion, fecha_inicio DESC);
 GO
 
+--| Motor de base de datos de cada aplicación y conexión (NEXUS_CONEXION_*) donde viven sus bases |
+IF COL_LENGTH('dbo.nexus_aplicaciones', 'motor') IS NULL
+    ALTER TABLE dbo.nexus_aplicaciones ADD
+        motor NVARCHAR(20) NOT NULL CONSTRAINT DF_nexus_aplicaciones_motor DEFAULT N'sqlserver'
+            CONSTRAINT CK_nexus_aplicaciones_motor CHECK (motor IN (N'sqlserver', N'postgresql', N'firebird', N'mongodb')),
+        conexion NVARCHAR(40) NOT NULL CONSTRAINT DF_nexus_aplicaciones_conexion DEFAULT N'kinetix';
+GO
+
+--| definicion: JSON neutral de tablas y base (el script se genera por motor); motor: motor del SQL escrito a mano |
+IF COL_LENGTH('dbo.nexus_migraciones', 'definicion') IS NULL
+    ALTER TABLE dbo.nexus_migraciones ADD
+        definicion NVARCHAR(MAX) NULL CONSTRAINT CK_nexus_migraciones_definicion CHECK (definicion IS NULL OR ISJSON(definicion) = 1),
+        motor NVARCHAR(20) NULL;
+GO
+
+--| Scripts equivalentes de una migración SQL manual para otros motores (requisito para cambiar de motor) |
+IF OBJECT_ID(N'dbo.nexus_migracion_equivalentes', N'U') IS NULL
+    CREATE TABLE dbo.nexus_migracion_equivalentes (
+        id_aplicacion NVARCHAR(30) NOT NULL,
+        numero INT NOT NULL,
+        motor NVARCHAR(20) NOT NULL
+            CONSTRAINT CK_nexus_migracion_equivalentes_motor CHECK (motor IN (N'sqlserver', N'postgresql', N'firebird', N'mongodb')),
+        script NVARCHAR(MAX) NOT NULL,
+        checksum CHAR(64) NOT NULL,
+        creado_por NVARCHAR(100) NOT NULL,
+        fecha_creacion DATETIME2 NOT NULL CONSTRAINT DF_nexus_migracion_equivalentes_fecha DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_nexus_migracion_equivalentes PRIMARY KEY CLUSTERED (id_aplicacion, numero, motor),
+        CONSTRAINT FK_nexus_migracion_equivalentes_migracion FOREIGN KEY (id_aplicacion, numero)
+            REFERENCES dbo.nexus_migraciones (id_aplicacion, numero)
+    );
+GO
+
+--| Cambios de motor: las bases de origen no se tocan, así el cambio se puede revertir hasta completarlo |
+IF OBJECT_ID(N'dbo.nexus_cambios_motor', N'U') IS NULL
+    CREATE TABLE dbo.nexus_cambios_motor (
+        id_cambio NVARCHAR(50) NOT NULL CONSTRAINT PK_nexus_cambios_motor PRIMARY KEY CLUSTERED,
+        id_aplicacion NVARCHAR(30) NOT NULL CONSTRAINT FK_nexus_cambios_motor_app REFERENCES dbo.nexus_aplicaciones(id_aplicacion),
+        motor_origen NVARCHAR(20) NOT NULL,
+        conexion_origen NVARCHAR(40) NOT NULL,
+        motor_destino NVARCHAR(20) NOT NULL,
+        conexion_destino NVARCHAR(40) NOT NULL,
+        version_origen INT NOT NULL,
+        bases_origen NVARCHAR(MAX) NOT NULL CONSTRAINT CK_nexus_cambios_motor_bases CHECK (ISJSON(bases_origen) = 1),
+        estado NVARCHAR(30) NOT NULL CONSTRAINT CK_nexus_cambios_motor_estado CHECK (estado IN (
+            N'esquema_pendiente', N'esquema_desplegado', N'esquema_con_errores', N'copia_con_errores', N'datos_copiados',
+            N'completado', N'revertido')),
+        detalle NVARCHAR(MAX) NULL CONSTRAINT CK_nexus_cambios_motor_detalle CHECK (detalle IS NULL OR ISJSON(detalle) = 1),
+        solicitado_por NVARCHAR(100) NOT NULL,
+        fecha_inicio DATETIME2 NOT NULL,
+        fecha_fin DATETIME2 NULL
+    );
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'idx_nexus_cambios_motor_app' AND object_id = OBJECT_ID('dbo.nexus_cambios_motor'))
+    CREATE INDEX idx_nexus_cambios_motor_app ON dbo.nexus_cambios_motor(id_aplicacion, fecha_inicio DESC);
+GO
+
 --| Permisos de Sentinel para el registro de aplicaciones |
 --| nombre_permiso solo existe en algunas bases: se inserta con SQL dinámico cuando está |
 DECLARE @permisos TABLE (id NVARCHAR(50), nombre NVARCHAR(100), recurso NVARCHAR(100), accion NVARCHAR(100), descripcion NVARCHAR(500));

@@ -1,4 +1,5 @@
-"""Acceso de Nexus al catálogo y operaciones de SQL Server: contrato, implementación real y doble en memoria."""
+"""Acceso de Nexus al catálogo de una base: contrato común, implementación SQL Server y doble en memoria.
+PostgreSQL, Firebird y MongoDB viven en postgres_catalog, firebird_catalog y mongo_catalog."""
 
 from __future__ import annotations
 
@@ -9,12 +10,22 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 import pyodbc
 
+from src.agents.database_agent.dialects import Dialect, get_dialect
 from src.agents.security_agent.models import InvalidInputError
 from src.agents.sqlserver import SqlServerClient, is_statement_error, server_message
+
+PROCEDURES = "procedimientos"
+BACKUPS = "respaldos"
+ENGINE_CAPABILITIES: Dict[str, FrozenSet[str]] = {
+    "sqlserver": frozenset({PROCEDURES, BACKUPS}),
+    "postgresql": frozenset({PROCEDURES, BACKUPS}),
+    "firebird": frozenset({PROCEDURES, BACKUPS}),
+    "mongodb": frozenset({BACKUPS}),
+}
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,18 @@ def _length(type_name: str, max_length: int) -> Optional[int]:
 
 
 class DatabaseCatalog(ABC):
+    """El esquema llega ya resuelto por el dialecto: None en motores sin esquemas (Firebird, MongoDB)."""
+
+    motor = "sqlserver"
+
+    @property
+    def dialect(self) -> Dialect:
+        return get_dialect(self.motor)
+
+    @property
+    def capacidades(self) -> FrozenSet[str]:
+        return ENGINE_CAPABILITIES[self.motor]
+
     @abstractmethod
     def ping(self) -> None: ...
 
@@ -57,7 +80,7 @@ class DatabaseCatalog(ABC):
     def list_tables(self) -> List[Dict[str, Any]]: ...
 
     @abstractmethod
-    def describe_table(self, schema: str, table: str) -> Optional[Dict[str, Any]]: ...
+    def describe_table(self, schema: Optional[str], table: str) -> Optional[Dict[str, Any]]: ...
 
     @abstractmethod
     def list_procedures(self) -> List[Dict[str, Any]]: ...
@@ -79,7 +102,7 @@ class DatabaseCatalog(ABC):
     def backup(self, directory: Optional[str], label: str) -> Dict[str, Any]: ...
 
     @abstractmethod
-    def list_backups(self, limit: int) -> List[Dict[str, Any]]: ...
+    def list_backups(self, directory: Optional[str], limit: int) -> List[Dict[str, Any]]: ...
 
 
 class SqlServerCatalog(DatabaseCatalog):
@@ -285,7 +308,7 @@ class SqlServerCatalog(DatabaseCatalog):
             "solo_copia": True,
         }
 
-    def list_backups(self, limit: int) -> List[Dict[str, Any]]:
+    def list_backups(self, directory: Optional[str], limit: int) -> List[Dict[str, Any]]:
         with self._db.cursor() as cur:
             cur.execute(
                 "SELECT TOP (?) b.backup_set_id, b.name, b.type, b.is_copy_only, b.backup_start_date, b.backup_finish_date, "
@@ -305,25 +328,39 @@ class SqlServerCatalog(DatabaseCatalog):
             ]
 
 
-class InMemoryCatalog(DatabaseCatalog):
-    """Doble de pruebas: tablas y procedimientos declarados a mano; los procedimientos devuelven sus argumentos."""
+_CREATED_OBJECT = (
+    re.compile(r"CREATE TABLE (?:IF NOT EXISTS )?[\[\"](\w+)[\]\"]\.[\[\"](\w+)[\]\"]"),
+    re.compile(r"CREATE TABLE ()\"(\w+)\""),
+    re.compile(r"\"create\": ()\"(\w+)\""),
+)
 
-    def __init__(self) -> None:
+
+class InMemoryCatalog(DatabaseCatalog):
+    """Doble de pruebas: tablas y procedimientos declarados a mano; los procedimientos devuelven sus argumentos.
+    Simula cualquier motor; los nombres no distinguen mayúsculas (como SQL Server y los nombres sin comillas de Firebird)."""
+
+    def __init__(self, motor: str = "sqlserver") -> None:
+        self.motor = get_dialect(motor).motor
         self.tables: Dict[tuple, Dict[str, Any]] = {}
         self.procedures: Dict[tuple, Dict[str, Any]] = {}
         self.applied_scripts: List[str] = []
         self.backups: List[Dict[str, Any]] = []
 
-    def add_table(self, schema: str, table: str, columns: List[str], rows: int = 0) -> None:
-        self.tables[(schema, table)] = {
+    @staticmethod
+    def _key(schema: Optional[str], name: str) -> tuple:
+        return ((schema or "").lower(), name.lower())
+
+    def add_table(self, schema: Optional[str], table: str, columns: List[str], rows: int = 0) -> None:
+        self.tables[self._key(schema, table)] = {
             "esquema": schema, "tabla": table, "filas": rows,
             "columnas": [{"nombre": c, "tipo": "nvarchar", "longitud": 255, "precision": None, "escala": None,
                           "nulable": True, "identidad": False, "default": None} for c in columns],
             "clave_primaria": [], "indices": [], "claves_foraneas": [],
         }
 
-    def add_procedure(self, schema: str, name: str, parameters: List[ProcedureParameter], definition: str = "") -> None:
-        self.procedures[(schema, name)] = {"parametros": parameters, "definicion": definition}
+    def add_procedure(self, schema: Optional[str], name: str, parameters: List[ProcedureParameter], definition: str = "") -> None:
+        self.procedures[self._key(schema, name)] = {"esquema": schema, "nombre": name, "parametros": parameters,
+                                                    "definicion": definition}
 
     def ping(self) -> None:
         return None
@@ -332,29 +369,31 @@ class InMemoryCatalog(DatabaseCatalog):
         return [{"esquema": t["esquema"], "tabla": t["tabla"], "filas": t["filas"], "creada": None, "modificada": None}
                 for t in self.tables.values()]
 
-    def describe_table(self, schema: str, table: str) -> Optional[Dict[str, Any]]:
-        return self.tables.get((schema, table))
+    def describe_table(self, schema: Optional[str], table: str) -> Optional[Dict[str, Any]]:
+        return self.tables.get(self._key(schema, table))
 
     def list_procedures(self) -> List[Dict[str, Any]]:
-        return [{"esquema": s, "nombre": n, "parametros": [p.nombre for p in v["parametros"]], "creado": None, "modificado": None}
-                for (s, n), v in self.procedures.items()]
+        return [{"esquema": v["esquema"], "nombre": v["nombre"], "parametros": [p.nombre for p in v["parametros"]],
+                 "creado": None, "modificado": None} for v in self.procedures.values()]
 
-    def procedure_parameters(self, schema: str, name: str) -> Optional[List[ProcedureParameter]]:
-        entry = self.procedures.get((schema, name))
+    def procedure_parameters(self, schema: Optional[str], name: str) -> Optional[List[ProcedureParameter]]:
+        entry = self.procedures.get(self._key(schema, name))
         return None if entry is None else entry["parametros"]
 
-    def procedure_definition(self, schema: str, name: str) -> Optional[str]:
-        entry = self.procedures.get((schema, name))
+    def procedure_definition(self, schema: Optional[str], name: str) -> Optional[str]:
+        entry = self.procedures.get(self._key(schema, name))
         return None if entry is None else entry["definicion"]
 
-    def execute_procedure(self, schema: str, name: str, arguments: Dict[str, Any], max_rows: int) -> ProcedureResult:
+    def execute_procedure(self, schema: Optional[str], name: str, arguments: Dict[str, Any], max_rows: int) -> ProcedureResult:
         return ProcedureResult([{"columnas": list(arguments), "filas": [list(arguments.values())], "truncado": False}])
 
     def apply_ddl(self, script: str) -> None:
         self.applied_scripts.append(script)
-        match = re.search(r"CREATE TABLE \[(\w+)\]\.\[(\w+)\]", script)
-        if match:
-            self.add_table(match.group(1), match.group(2), [])
+        for pattern in _CREATED_OBJECT:
+            match = pattern.search(script)
+            if match:
+                self.add_table(match.group(1) or None, match.group(2), [])
+                return
 
     def backup(self, directory: Optional[str], label: str) -> Dict[str, Any]:
         entry = {"base_datos": "memoria", "archivo": f"{directory or 'memoria'}/{label}.bak", "nombre": label,
@@ -362,5 +401,5 @@ class InMemoryCatalog(DatabaseCatalog):
         self.backups.append(entry)
         return entry
 
-    def list_backups(self, limit: int) -> List[Dict[str, Any]]:
+    def list_backups(self, directory: Optional[str], limit: int) -> List[Dict[str, Any]]:
         return list(reversed(self.backups))[:limit]

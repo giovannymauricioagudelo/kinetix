@@ -33,7 +33,7 @@ def nexus(provisioner):
 
 
 def test_per_company_model_creates_one_database_per_company(nexus, provisioner):
-    app = nexus.register_app("ana", "gio", {"id_aplicacion": "talleres", "nombre": "Talleres", "modelo_datos": "por_empresa",
+    app = nexus.register_app("ana", "gio", {"id_aplicacion": "talleres", "nombre": "Talleres", "motor": "sqlserver", "modelo_datos": "por_empresa",
                                             "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
     assert [d["nombre_base"] for d in app["bases_datos"]] == ["talleres_acme"]
     assert app["migraciones"] == [] and app["seguridad_por_fila"] is False
@@ -62,7 +62,7 @@ def test_per_company_model_creates_one_database_per_company(nexus, provisioner):
 
 
 def test_multi_company_model_shares_one_database_with_rls(nexus, provisioner):
-    app = nexus.register_app("ana", "gio", {"id_aplicacion": "citas", "nombre": "Citas", "modelo_datos": "multiempresa",
+    app = nexus.register_app("ana", "gio", {"id_aplicacion": "citas", "nombre": "Citas", "motor": "sqlserver", "modelo_datos": "multiempresa",
                                             "id_solicitud": "req-1234abcd",
                                             "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
     assert [d["nombre_base"] for d in app["bases_datos"]] == ["citas"]
@@ -86,7 +86,7 @@ def test_multi_company_model_shares_one_database_with_rls(nexus, provisioner):
 
 
 def test_registration_rejects_invalid_or_taken_names(nexus):
-    base = {"nombre": "X", "modelo_datos": "multiempresa"}
+    base = {"nombre": "X", "motor": "sqlserver", "modelo_datos": "multiempresa"}
     for bad in ("Mayus", "1app", "a", "con-guion"):
         with pytest.raises(InvalidInputError):
             nexus.register_app("ana", "gio", {**base, "id_aplicacion": bad})
@@ -94,6 +94,10 @@ def test_registration_rejects_invalid_or_taken_names(nexus):
         nexus.register_app("ana", "gio", {**base, "id_aplicacion": "kinetix"})
     with pytest.raises(InvalidInputError):
         nexus.register_app("ana", "gio", {**base, "id_aplicacion": "ok", "modelo_datos": "hibrido"})
+    with pytest.raises(InvalidInputError, match="motor es obligatorio"):
+        nexus.register_app("ana", "gio", {**base, "id_aplicacion": "ok", "motor": None})
+    with pytest.raises(InvalidInputError, match="ninguna conexión postgresql"):
+        nexus.register_app("ana", "gio", {**base, "id_aplicacion": "ok", "motor": "postgresql"})
     with pytest.raises(ConflictError):
         nexus.register_app("ana", "gio", {**base, "id_aplicacion": "ajena"})
 
@@ -110,11 +114,11 @@ def test_per_company_database_that_already_exists_is_not_adopted():
     registry = InMemoryAppRegistry()
     nexus = NexusAppService(registry, InMemoryProvisioner(existing=("aje_na",)))
     with pytest.raises(ConflictError):
-        nexus.register_app("ana", "gio", {"id_aplicacion": "aje", "nombre": "A", "modelo_datos": "por_empresa",
+        nexus.register_app("ana", "gio", {"id_aplicacion": "aje", "nombre": "A", "motor": "sqlserver", "modelo_datos": "por_empresa",
                                           "empresas": [{"id_empresa": "na", "nombre": "N"}]})
     assert registry.list_apps("gio") == []
 
-    nexus.register_app("ana", "gio", {"id_aplicacion": "aje", "nombre": "A", "modelo_datos": "por_empresa"})
+    nexus.register_app("ana", "gio", {"id_aplicacion": "aje", "nombre": "A", "motor": "sqlserver", "modelo_datos": "por_empresa"})
     with pytest.raises(ConflictError):
         nexus.add_company("ana", "gio", "aje", {"id_empresa": "na", "nombre": "N"})
     with pytest.raises(InvalidInputError):
@@ -139,7 +143,7 @@ def test_raw_migrations_reject_dangerous_sql(script):
 
 
 def test_raw_migrations_are_numbered_immutable_and_comments_are_ignored(nexus):
-    nexus.register_app("ana", "gio", {"id_aplicacion": "crm", "nombre": "CRM", "modelo_datos": "multiempresa"})
+    nexus.register_app("ana", "gio", {"id_aplicacion": "crm", "nombre": "CRM", "motor": "sqlserver", "modelo_datos": "multiempresa"})
     script = "-- USE no aplica en comentarios\nALTER TABLE dbo.empresas ADD nit NVARCHAR(20) NULL;\nGO\nSELECT 1;"
     created = nexus.add_migration("ana", "gio", "crm", {"nombre": "agregar_nit", "script": script})["migracion"]
     assert created["numero"] == 2 and created["checksum"] == checksum(script)
@@ -153,7 +157,7 @@ def test_raw_migrations_are_numbered_immutable_and_comments_are_ignored(nexus):
 def test_failed_migration_marks_database_and_is_logged():
     provisioner = InMemoryProvisioner(fail_marker="FALLA")
     nexus = NexusAppService(InMemoryAppRegistry(), provisioner)
-    nexus.register_app("ana", "gio", {"id_aplicacion": "inv", "nombre": "Inv", "modelo_datos": "multiempresa"})
+    nexus.register_app("ana", "gio", {"id_aplicacion": "inv", "nombre": "Inv", "motor": "sqlserver", "modelo_datos": "multiempresa"})
     nexus.add_migration("ana", "gio", "inv", {"nombre": "rota", "script": "SELECT 'FALLA'"})
     result = nexus.deploy("ana", "gio", "inv")
     assert result["fallidas"] == 1
@@ -184,7 +188,7 @@ def test_api_registers_deploys_and_audits(api):
     assert client.get(url, headers=headers(client, "luis")).status_code == 403
 
     auth = headers(client)
-    created = client.post(url, json={"id_aplicacion": "vitalis", "nombre": "Vitalis", "modelo_datos": "por_empresa",
+    created = client.post(url, json={"id_aplicacion": "vitalis", "nombre": "Vitalis", "motor": "sqlserver", "modelo_datos": "por_empresa",
                                      "empresas": [{"id_empresa": "clinica_a", "nombre": "Clínica A"}]}, headers=auth)
     assert created.status_code == 201
     assert created.json()["aplicacion"]["bases_datos"][0]["nombre_base"] == "vitalis_clinica_a"

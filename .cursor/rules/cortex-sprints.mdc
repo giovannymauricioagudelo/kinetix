@@ -1,0 +1,28 @@
+---
+description: Regla de la fábrica Kinetix - proyectos de complejidad media o alta se ejecutan por sprints identificados por aplicación
+alwaysApply: true
+---
+
+# Ejecución por sprints (fábrica de aplicaciones Kinetix)
+
+Cuando Cortex evalúa una solicitud con complejidad **media** o **alta**, el proyecto se ejecuta por **sprints**; con complejidad **baja** basta el plan único.
+
+- Cada sprint se identifica por aplicación: `{aplicacion}-sprint-NN` (ej. `talleres-sprint-03`) y se muestra como `Sprint 3 de 10`.
+- Aplicación nueva: Cortex pregunta `id_aplicacion` (mismo identificador que la base en Nexus).
+- Orden lógico: fundaciones (Nexus, Sentinel, esqueleto y CI), un sprint por capacidad (reglas, integraciones, interfaz, reportes, IA), y en complejidad alta cumplimiento, rendimiento y piloto; siempre se cierra con salida a producción (Prism, Orbit, Argus).
+- Cada sprint tiene objetivo, entregable y tareas por agente; se cierra con el entregable demostrado y las pruebas de Prism en verde.
+
+## Quién decide el ritmo
+
+- Aprobar el plan **no** arranca ningún sprint: todos quedan `pendiente`.
+- Un humano inicia cada sprint (`POST /api/v1/cortex/requests/{id}/sprints/{n}/iniciar`) cuando decide continuar; solo si el anterior está `completado`.
+- Al terminar: `POST .../sprints/{n}/completar` (con notas). El siguiente sprint **no** se inicia solo.
+- Progreso por aplicación: `GET /api/v1/cortex/apps/{aplicacion}/sprints`.
+
+## Para el agente en Cursor
+
+- Trabaja solo en las tareas del sprint `en_curso` de esa aplicación; no adelantes trabajo de sprints pendientes.
+- Al terminar un sprint, resume el entregable y pregunta si se completa y si se inicia el siguiente (`confirmado` = sí, solo para lo preguntado).
+- En respuestas y commits identifica el sprint: `talleres-sprint-03 (Sprint 3 de 10)`.
+
+Fuente de verdad: `src/agents/orchestrator_agent/agent.py` (`SPRINT_COMPLEXITIES`, `_sprint_specs`, `start_sprint`, `complete_sprint`).

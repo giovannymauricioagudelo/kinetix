@@ -1,7 +1,10 @@
 """
-Nexus (DatabaseAgent) — esquema, procedimientos almacenados, DDL y respaldos sobre SQL Server kinetix,
-y registro de aplicaciones: cada aplicación tiene su propia base (una por empresa o una multiempresa)
-registrada en kinetix, con migraciones numeradas que se despliegan a cada base.
+Nexus (DatabaseAgent) — esquema, procedimientos almacenados, DDL y respaldos sobre varias conexiones:
+kinetix (SQL Server, por defecto) y las declaradas en NEXUS_CONEXION_<NOMBRE> (SQL Server, PostgreSQL,
+Firebird o MongoDB), elegidas con ?conexion=. También el registro de aplicaciones: cada aplicación elige
+su motor y tiene su propia base (una por empresa o una multiempresa) registrada en kinetix, con migraciones
+numeradas que se despliegan a cada base. El motor se puede cambiar después (esquema + copia de datos),
+de forma revertible hasta completar el cambio.
 Todo requiere un token de Sentinel salvo /salud.
 """
 
@@ -18,7 +21,15 @@ from src.agents.agent_catalog import NEXUS, openapi_tag
 from src.agents.database_agent.app_registry import DATA_MODELS
 from src.agents.database_agent.app_service import NexusAppService
 from src.agents.database_agent.database_agent import ColumnDefinition, TableDefinition
-from src.agents.database_agent.dependencies import get_nexus_apps_service, get_nexus_service
+from src.agents.database_agent.dependencies import (
+    DEFAULT_CONNECTION,
+    connection_names,
+    connection_view,
+    get_nexus_apps_service,
+    get_nexus_service,
+    invalid_connections,
+)
+from src.agents.database_agent.dialects import MOTORES
 from src.agents.database_agent.service import VERSION, NexusService
 from src.agents.security_agent.dependencies import get_security_service, require_permission, translate_errors
 from src.agents.security_agent.models import Principal
@@ -61,9 +72,12 @@ class ApplicationBody(BaseModel):
     id_aplicacion: str = Field(..., min_length=2, max_length=30, description="Nombra la base: {app} o {app}_{empresa}")
     nombre: str = Field(..., min_length=1, max_length=100)
     modelo_datos: str = Field(..., description=" o ".join(DATA_MODELS))
+    motor: str = Field(..., description=" | ".join(MOTORES) + " (se puede cambiar después con cambio-motor)")
+    conexion: Optional[str] = Field(None, max_length=40, description="Servidor de GET /aplicaciones/servidores; "
+                                    "vacío = kinetix en SQL Server o la única conexión del motor")
     descripcion: Optional[str] = Field(None, max_length=500)
     id_solicitud: Optional[str] = Field(None, max_length=50, description="Solicitud de Cortex que originó la aplicación")
-    seguridad_por_fila: bool = Field(True, description="Solo multiempresa: política RLS por SESSION_CONTEXT('id_empresa')")
+    seguridad_por_fila: bool = Field(True, description="Solo multiempresa en SQL Server o PostgreSQL: política de seguridad por fila")
     empresas: List[CompanyBody] = Field(default_factory=list, max_length=200)
 
 
@@ -85,6 +99,16 @@ class DeployBody(BaseModel):
     id_empresa: Optional[str] = Field(None, max_length=30, description="Solo por_empresa: despliega únicamente esa base")
 
 
+class EquivalentBody(BaseModel):
+    motor: str = Field(..., description=" | ".join(MOTORES))
+    script: str = Field(..., min_length=1, description="Mismo efecto que la migración original, escrito para ese motor")
+
+
+class EngineChangeBody(BaseModel):
+    motor: str = Field(..., description=" | ".join(MOTORES))
+    conexion: Optional[str] = Field(None, max_length=40, description="Vacío = conexión por defecto del motor")
+
+
 def _ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
@@ -93,10 +117,23 @@ def _ok(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"estado": "exito", **payload}
 
 
+def _connection(conexion: Optional[str] = Query(None, max_length=40, description="Conexión de GET /conexiones; vacío = kinetix")) -> str:
+    return (conexion or DEFAULT_CONNECTION).strip().lower()
+
+
+def _service(conexion: str = Depends(_connection)) -> NexusService:
+    with translate_errors(UNAVAILABLE):
+        return get_nexus_service(conexion)
+
+
+def _resource(kind: str, name: str, conexion: str) -> str:
+    return f"{kind}:{name}" if conexion == DEFAULT_CONNECTION else f"{kind}:{conexion}/{name}"
+
+
 @router.get("/salud")
-def nexus_health(service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def nexus_health() -> Dict[str, Any]:
     try:
-        service.ping()
+        get_nexus_service().ping()
         database = "conectada"
     except Exception:
         database = "no disponible"
@@ -109,14 +146,16 @@ def nexus_health(service: NexusService = Depends(get_nexus_service)) -> Dict[str
 
 
 @router.get("/info", dependencies=[Depends(_can_view)])
-def nexus_info(service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def nexus_info(service: NexusService = Depends(_service)) -> Dict[str, Any]:
     return {
         "id": "nexus",
         "agente": NEXUS.codename,
         "legacy_id": NEXUS.legacy_id,
         "version": VERSION,
         "descripcion": NEXUS.tagline,
-        "motor": "SQL Server",
+        "motor": service.info()["nombre_motor"],
+        "conexion": service.info(),
+        "motores_soportados": list(MOTORES),
         "max_filas_por_conjunto": service.max_rows,
         "permisos": {
             "ver_esquema": PERM_VIEW_SCHEMA,
@@ -134,47 +173,70 @@ def nexus_info(service: NexusService = Depends(get_nexus_service)) -> Dict[str, 
     }
 
 
+@router.get("/conexiones", dependencies=[Depends(_can_view)])
+def list_connections() -> Dict[str, Any]:
+    connections = []
+    for name in connection_names():
+        with translate_errors(UNAVAILABLE):
+            view = connection_view(name)
+            service = get_nexus_service(name)
+        try:
+            service.ping()
+            status = "conectada"
+        except Exception:
+            status = "no disponible"
+        connections.append({**view, **service.info(), "estado": status})
+    invalid = [{"nombre": name, "estado": "configuracion_invalida", "error": error}
+               for name, error in sorted(invalid_connections().items())]
+    return _ok({"total": len(connections), "conexiones": connections, "invalidas": invalid})
+
+
 @router.get("/esquema/tablas", dependencies=[Depends(_can_view)])
-def list_tables(service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def list_tables(service: NexusService = Depends(_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok(service.tables())
 
 
 @router.get("/esquema/tablas/{nombre}", dependencies=[Depends(_can_view)])
-def describe_table(nombre: str, service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def describe_table(nombre: str, service: NexusService = Depends(_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok({"tabla": service.table(nombre)})
 
 
 @router.post("/esquema/ddl", dependencies=[Depends(_can_view)])
-def generate_ddl(definition: TableDefinition, service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def generate_ddl(
+    definition: TableDefinition,
+    motor: Optional[str] = Query(None, description=f"Genera para otro motor sin conectarse: {', '.join(MOTORES)}"),
+    service: NexusService = Depends(_service),
+) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
-        return _ok(service.generate_ddl(definition))
+        return _ok(service.generate_ddl(definition, motor))
 
 
 @router.post("/esquema/tablas", status_code=201)
 def create_table(
     definition: TableDefinition,
     request: Request,
+    conexion: str = Depends(_connection),
     principal: Principal = Depends(_can_modify),
-    service: NexusService = Depends(get_nexus_service),
+    service: NexusService = Depends(_service),
     security: SecurityService = Depends(get_security_service),
 ) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         result = service.create_table(definition)
-        security.record_audit(principal, "nexus_crear_tabla", f"tabla:{result['tabla']}",
-                              f"hash {result['hash_esquema']}", ip=_ip(request))
+        security.record_audit(principal, "nexus_crear_tabla", _resource("tabla", result["tabla"], conexion),
+                              f"{result['motor']} hash {result['hash_esquema']}", ip=_ip(request))
         return _ok(result)
 
 
 @router.get("/procedimientos", dependencies=[Depends(_can_view)])
-def list_procedures(service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def list_procedures(service: NexusService = Depends(_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok(service.procedures())
 
 
 @router.get("/procedimientos/{nombre}", dependencies=[Depends(_can_view)])
-def procedure_detail(nombre: str, service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def procedure_detail(nombre: str, service: NexusService = Depends(_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok({"procedimiento": service.procedure(nombre)})
 
@@ -184,19 +246,21 @@ def execute_procedure(
     nombre: str,
     body: ExecuteBody,
     request: Request,
+    conexion: str = Depends(_connection),
     principal: Principal = Depends(_can_execute),
-    service: NexusService = Depends(get_nexus_service),
+    service: NexusService = Depends(_service),
     security: SecurityService = Depends(get_security_service),
 ) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         result = service.execute_procedure(nombre, body.parametros, body.max_filas)
-        security.record_audit(principal, "nexus_ejecutar_procedimiento", f"procedimiento:{result['procedimiento']}",
+        security.record_audit(principal, "nexus_ejecutar_procedimiento",
+                              _resource("procedimiento", result["procedimiento"], conexion),
                               json.dumps({"parametros": result["parametros"]}, ensure_ascii=False), ip=_ip(request))
         return _ok(result)
 
 
 @router.get("/respaldos", dependencies=[Depends(_can_backup)])
-def list_backups(limite: int = Query(20, ge=1, le=200), service: NexusService = Depends(get_nexus_service)) -> Dict[str, Any]:
+def list_backups(limite: int = Query(20, ge=1, le=200), service: NexusService = Depends(_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok(service.backups(limite))
 
@@ -205,13 +269,15 @@ def list_backups(limite: int = Query(20, ge=1, le=200), service: NexusService = 
 def create_backup(
     body: BackupBody,
     request: Request,
+    conexion: str = Depends(_connection),
     principal: Principal = Depends(_can_backup),
-    service: NexusService = Depends(get_nexus_service),
+    service: NexusService = Depends(_service),
     security: SecurityService = Depends(get_security_service),
 ) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         result = service.backup(body.etiqueta)
-        security.record_audit(principal, "nexus_respaldo", f"respaldo:{result['nombre']}", result["archivo"], ip=_ip(request))
+        security.record_audit(principal, "nexus_respaldo", _resource("respaldo", result["nombre"], conexion),
+                              result["archivo"], ip=_ip(request))
         return _ok({"respaldo": result})
 
 
@@ -225,6 +291,14 @@ def list_applications(principal: Principal = Depends(_can_view_apps),
         return _ok(apps.list_apps(principal.id_empresa))
 
 
+@router.get("/aplicaciones/servidores", dependencies=[Depends(_can_view_apps)])
+def application_servers(apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:
+    """Conexiones donde se pueden crear bases de aplicaciones, con su motor."""
+    with translate_errors(UNAVAILABLE):
+        servers = apps.servers()
+        return _ok({"total": len(servers), "servidores": servers, "motores_soportados": list(MOTORES)})
+
+
 @router.post("/aplicaciones", status_code=201)
 def register_application(
     body: ApplicationBody,
@@ -236,7 +310,8 @@ def register_application(
     with translate_errors(UNAVAILABLE):
         result = apps.register_app(principal.nombre_usuario, principal.id_empresa, body.model_dump())
         security.record_audit(principal, "nexus_registrar_aplicacion", f"aplicacion:{result['id_aplicacion']}",
-                              f"modelo {result['modelo_datos']}, {len(result['bases_datos'])} base(s)", ip=_ip(request))
+                              f"modelo {result['modelo_datos']}, motor {result['motor']} ({result['conexion']}), "
+                              f"{len(result['bases_datos'])} base(s)", ip=_ip(request))
         return _ok({"aplicacion": result})
 
 
@@ -328,3 +403,81 @@ def application_deployments(id_aplicacion: str, limite: int = Query(20, ge=1, le
                             apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok(apps.deployments(principal.id_empresa, id_aplicacion, limite))
+
+
+@router.post("/aplicaciones/{id_aplicacion}/migraciones/{numero}/equivalentes", status_code=201)
+def add_migration_equivalent(
+    id_aplicacion: str,
+    numero: int,
+    body: EquivalentBody,
+    request: Request,
+    principal: Principal = Depends(_can_manage_apps),
+    apps: NexusAppService = Depends(get_nexus_apps_service),
+    security: SecurityService = Depends(get_security_service),
+) -> Dict[str, Any]:
+    """Script equivalente de una migración SQL manual para otro motor (requisito para cambiar a ese motor)."""
+    with translate_errors(UNAVAILABLE):
+        result = apps.add_equivalent(principal.nombre_usuario, principal.id_empresa, id_aplicacion, numero, body.model_dump())
+        security.record_audit(principal, "nexus_agregar_equivalente", f"aplicacion:{id_aplicacion}",
+                              f"migración {numero} para {body.motor}", ip=_ip(request))
+        return _ok(result)
+
+
+@router.post("/aplicaciones/{id_aplicacion}/cambio-motor")
+def change_application_engine(
+    id_aplicacion: str,
+    body: EngineChangeBody,
+    request: Request,
+    vista_previa: bool = Query(False, description="Solo muestra bloqueos y advertencias, sin cambiar nada"),
+    principal: Principal = Depends(_can_deploy_apps),
+    apps: NexusAppService = Depends(get_nexus_apps_service),
+    security: SecurityService = Depends(get_security_service),
+) -> Dict[str, Any]:
+    """Pasa la aplicación a otro motor: despliega el esquema allí y copia los datos tabla por tabla.
+    Las bases de origen no se tocan: el cambio se puede revertir hasta completarlo."""
+    with translate_errors(UNAVAILABLE):
+        result = apps.change_engine(principal.nombre_usuario, principal.id_empresa, id_aplicacion, body.model_dump(),
+                                    vista_previa)
+        if not vista_previa:
+            change = result["cambio"]
+            security.record_audit(principal, "nexus_cambiar_motor", f"aplicacion:{id_aplicacion}",
+                                  f"{change['origen']['motor']}/{change['origen']['conexion']} -> "
+                                  f"{change['destino']['motor']}/{change['destino']['conexion']}: {change['estado']}",
+                                  ip=_ip(request))
+        return _ok(result)
+
+
+def _engine_change_action(action: str, audit: str):
+    def endpoint(
+        id_aplicacion: str,
+        request: Request,
+        principal: Principal = Depends(_can_deploy_apps),
+        apps: NexusAppService = Depends(get_nexus_apps_service),
+        security: SecurityService = Depends(get_security_service),
+    ) -> Dict[str, Any]:
+        with translate_errors(UNAVAILABLE):
+            result = getattr(apps, action)(principal.nombre_usuario, principal.id_empresa, id_aplicacion)
+            change = result["cambio"]
+            security.record_audit(principal, audit, f"aplicacion:{id_aplicacion}",
+                                  f"{change['id_cambio']}: {change['estado']}", ip=_ip(request))
+            return _ok(result)
+    return endpoint
+
+
+router.add_api_route("/aplicaciones/{id_aplicacion}/cambio-motor/copiar-datos",
+                     _engine_change_action("copy_engine_data", "nexus_copiar_datos_motor"), methods=["POST"],
+                     summary="Reintenta el cambio de motor en curso: despliega lo pendiente y copia las tablas que falten")
+router.add_api_route("/aplicaciones/{id_aplicacion}/cambio-motor/completar",
+                     _engine_change_action("complete_engine_change", "nexus_completar_cambio_motor"), methods=["POST"],
+                     summary="Cierra el cambio de motor con los datos copiados (ya no se puede revertir)")
+router.add_api_route("/aplicaciones/{id_aplicacion}/cambio-motor/revertir",
+                     _engine_change_action("revert_engine_change", "nexus_revertir_cambio_motor"), methods=["POST"],
+                     summary="Devuelve la aplicación al motor de origen, con sus bases como estaban")
+
+
+@router.get("/aplicaciones/{id_aplicacion}/cambio-motor")
+def application_engine_changes(id_aplicacion: str, limite: int = Query(20, ge=1, le=200),
+                               principal: Principal = Depends(_can_view_apps),
+                               apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:
+    with translate_errors(UNAVAILABLE):
+        return _ok(apps.engine_changes(principal.id_empresa, id_aplicacion, limite))

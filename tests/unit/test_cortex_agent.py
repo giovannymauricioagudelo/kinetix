@@ -164,6 +164,132 @@ def test_approved_request_rejects_new_answers(cortex):
         cortex.answer(request.id, {"severidad": "alta"})
 
 
+# ============================================================================ sprints
+
+
+def _medium_app(cortex, app_name="Talleres SICITA"):
+    request = cortex.submit("Crear una aplicación nueva de citas con reportes y pantallas web")
+    assert request.complexity == Complexity.MEDIUM and "id_aplicacion" in _pending_ids(request)
+    request = cortex.answer(request.id, {"id_aplicacion": app_name, "motor_base_datos": "PostgreSQL"})
+    return _answer_all(cortex, request)
+
+
+def test_low_complexity_keeps_single_plan(cortex):
+    request = _answer_all(cortex, cortex.submit("El login no funciona", app_id="sicita"))
+    assert request.sprints == [] and request.to_dict()["ejecucion_por_sprints"] is False
+    assert "id_aplicacion" not in request.answers
+
+
+def test_medium_new_app_is_split_into_logical_sprints_identified_by_app(cortex):
+    request = _medium_app(cortex)
+    sprints = request.to_dict()["sprints"]
+    assert [s["clave"] for s in sprints] == ["fundaciones", "interfaz", "reportes", "salida"]
+    assert [s["etiqueta"] for s in sprints] == [f"Sprint {n} de 4" for n in range(1, 5)]
+    assert sprints[0]["id"] == "talleres_sicita-sprint-01" and sprints[1]["depende_de"] == "talleres_sicita-sprint-01"
+    assert all(s["estado"] == "planificado" for s in sprints)
+    foundations = {t["agente"]: t for t in sprints[0]["tareas"]}
+    assert "PostgreSQL" in foundations["Nexus"]["accion"] and foundations["Prism"]["depende_de"] == ["s01_vector"]
+    assert request.to_dict()["progreso_sprints"] == {"aplicacion": "talleres_sicita", "total": 4, "completados": 0,
+                                                     "actual": None, "siguiente": "Sprint 1 de 4"}
+
+
+def test_unclear_app_id_is_asked_again_and_no_aplica_gets_generated_id(cortex):
+    request = cortex.submit("Crear una aplicación nueva de citas con reportes y pantallas web")
+    request = cortex.answer(request.id, {"id_aplicacion": "???"})
+    assert "id_aplicacion" in _pending_ids(request)
+    request = _answer_all(cortex, request)
+    assert request.aplicacion == f"app_{request.id.removeprefix('req-')}"
+    assert request.sprints[0].id.startswith("app_")
+
+
+def test_humans_decide_when_each_sprint_starts(cortex):
+    request = _medium_app(cortex)
+    with pytest.raises(ValueError, match="Aprueba el plan"):
+        cortex.start_sprint(request.id, 1, "giovanny")
+    request = cortex.approve(request.id, "giovanny")
+    assert all(s.status.value == "pendiente" for s in request.sprints)
+    assert all(t.status.value == "por_sprint" for t in request.plan)
+    assert all(t.status.value == "espera_sprint" for s in request.sprints for t in s.tareas)
+    assert "inicia el Sprint 1 de 4" in request.to_dict()["siguiente_paso"]
+
+    with pytest.raises(ValueError, match="Completa primero el Sprint 1 de 4"):
+        cortex.start_sprint(request.id, 2, "giovanny")
+    request = cortex.start_sprint(request.id, 1, "giovanny")
+    assert all(t.status.value == "lista_para_delegar" for t in request.sprints[0].tareas)
+    with pytest.raises(ValueError, match="solo se inicia un sprint pendiente"):
+        cortex.start_sprint(request.id, 1, "giovanny")
+    with pytest.raises(ValueError, match="solo se completa un sprint en curso"):
+        cortex.complete_sprint(request.id, 2, "giovanny")
+
+    request = cortex.complete_sprint(request.id, 1, "giovanny", "Base creada en PostgreSQL")
+    assert request.sprints[0].notas == "Base creada en PostgreSQL"
+    assert request.sprints[1].status.value == "pendiente" and request.current_sprint() is None
+    assert "inicia el Sprint 2 de 4 (talleres_sicita-sprint-02)" in request.to_dict()["siguiente_paso"]
+
+    for numero in (2, 3, 4):
+        cortex.start_sprint(request.id, numero, "giovanny")
+        request = cortex.complete_sprint(request.id, numero, "giovanny")
+    assert request.status == RequestStatus.COMPLETED
+    with pytest.raises(ValueError):
+        cortex.answer(request.id, {"objetivo": "otro"})
+    with pytest.raises(KeyError):
+        cortex.start_sprint(request.id, 5, "giovanny")
+
+
+def test_high_complexity_adds_compliance_performance_and_pilot(cortex):
+    request = cortex.submit(
+        "Crear una aplicación nueva multiempresa para talleres con integración al ERP, reglas de impuestos, "
+        "dashboards de KPIs y app web y móvil para millones de usuarios, cumpliendo normativa DIAN"
+    )
+    assert request.complexity == Complexity.HIGH
+    request = _answer_all(cortex, cortex.answer(request.id, {"id_aplicacion": "talleres"}))
+    assert [s.clave for s in request.sprints] == ["fundaciones", "reglas", "integraciones", "interfaz", "reportes",
+                                                  "cumplimiento", "rendimiento", "piloto", "salida"]
+    assert request.sprints[-1].etiqueta == "Sprint 9 de 9"
+
+
+def test_scale_with_engine_change_gets_its_own_sprint_and_app_view(cortex):
+    request = cortex.submit("Necesitamos escalar el módulo de citas, está lento y con alta concurrencia de usuarios",
+                            app_id="sicita")
+    request = _answer_all(cortex, cortex.answer(request.id, {"cambio_motor": "de Mongo a PostgreSQL"}))
+    assert request.complexity in (Complexity.MEDIUM, Complexity.HIGH)
+    assert [s.clave for s in request.sprints] == ["diagnostico", "cambio_motor", "optimizacion", "salida"]
+    assert request.sprints[1].nombre == "Cambio de motor a PostgreSQL" and request.sprints[0].id == "sicita-sprint-01"
+    other = _answer_all(cortex, cortex.submit("La búsqueda de clientes no funciona", app_id="crm"))
+    assert [s.id for _, s in cortex.sprints_for_app("SICITA")] == [f"sicita-sprint-0{n}" for n in range(1, 5)]
+    assert cortex.sprints_for_app("crm") == [] and other.sprints == []
+
+
+def test_api_sprint_flow():
+    from src.api.routes.cortex_routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    body = client.post("/api/v1/cortex/requests", json={
+        "descripcion": "Crear una aplicación nueva de inventario con reportes y pantallas web"}).json()
+    request_id = body["id"]
+    while body["preguntas_pendientes"]:
+        answers = {q["id"]: ("inventario" if q["id"] == "id_aplicacion" else "no aplica") for q in body["preguntas_pendientes"]}
+        body = client.post(f"/api/v1/cortex/requests/{request_id}/answers", json={"respuestas": answers}).json()
+    assert body["ejecucion_por_sprints"] and body["sprints"][0]["id"] == "inventario-sprint-01"
+    client.post(f"/api/v1/cortex/requests/{request_id}/approve", json={"aprobado_por": "giovanny"})
+
+    url = f"/api/v1/cortex/requests/{request_id}/sprints"
+    assert client.post(f"{url}/2/iniciar", json={"iniciado_por": "giovanny"}).status_code == 409
+    assert client.post(f"{url}/9/iniciar", json={"iniciado_por": "giovanny"}).status_code == 404
+    started = client.post(f"{url}/1/iniciar", json={"iniciado_por": "giovanny"}).json()
+    assert started["progreso_sprints"]["actual"] == "Sprint 1 de 4"
+    done = client.post(f"{url}/1/completar", json={"completado_por": "giovanny", "notas": "ok"}).json()
+    assert done["sprints"][0]["estado"] == "completado" and done["sprints"][1]["estado"] == "pendiente"
+
+    view = client.get("/api/v1/cortex/apps/inventario/sprints").json()
+    assert view["completados"] == 1 and view["siguiente_disponible"] == "inventario-sprint-02"
+    assert view["sprints"][0]["id_solicitud"] == request_id
+    listed = client.get("/api/v1/cortex/requests").json()["solicitudes"]
+    assert any(s["aplicacion"] == "inventario" and s["progreso_sprints"]["completados"] == 1 for s in listed)
+
+
 def test_api_flow():
     from src.api.routes.cortex_routes import router
 

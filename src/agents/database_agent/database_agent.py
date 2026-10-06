@@ -70,37 +70,8 @@ class ColumnDefinition(BaseModel):
         return v
 
 
-SQLSERVER_TYPES = {
-    ColumnType.VARCHAR: "NVARCHAR(255)",
-    ColumnType.INT: "INT",
-    ColumnType.BIGINT: "BIGINT",
-    ColumnType.DECIMAL: "DECIMAL(18,2)",
-    ColumnType.BOOLEAN: "BIT",
-    ColumnType.DATETIME: "DATETIME2",
-    ColumnType.TEXT: "NVARCHAR(MAX)",
-    ColumnType.JSON: "NVARCHAR(MAX)",
-}
 NUMERIC_TYPES = {ColumnType.INT, ColumnType.BIGINT, ColumnType.DECIMAL}
 UNINDEXABLE_TYPES = {ColumnType.TEXT, ColumnType.JSON}
-
-
-def default_literal(column: ColumnDefinition) -> str:
-    """Traduce el default a un literal T-SQL seguro; lanza ValueError si no es válido para el tipo."""
-    raw = column.default.strip()
-    if raw.upper() in SQL_FUNCTION_DEFAULTS:
-        return raw.upper()
-    if column.type == ColumnType.BOOLEAN:
-        mapping = {"true": "1", "1": "1", "false": "0", "0": "0"}
-        if raw.lower() not in mapping:
-            raise ValueError(f"Default inválido para BOOLEAN en {column.name}: {raw}")
-        return mapping[raw.lower()]
-    if column.type in NUMERIC_TYPES:
-        if not re.fullmatch(r"-?\d+(\.\d+)?", raw):
-            raise ValueError(f"Default numérico inválido en {column.name}: {raw}")
-        return raw
-    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
-        raw = raw[1:-1]
-    return sql_string(raw)
 
 
 class TableDefinition(BaseModel):
@@ -155,6 +126,7 @@ class DatabaseAgentInput(AgentInput):
     table_definition: Optional[TableDefinition] = None
     migration: Optional[SchemaMigration] = None
     table_name: Optional[str] = None
+    motor: Optional[str] = Field(None, description="sqlserver (por defecto), postgresql, firebird o mongodb")
 
 
 class DatabaseAgentOutput(AgentOutput):
@@ -172,79 +144,29 @@ class DatabaseAgentOutput(AgentOutput):
 class SchemaManager:
     """Manages database schema creation and validation"""
 
-    def __init__(self):
+    def __init__(self, dialect=None):
+        from src.agents.database_agent.dialects import SqlServerDialect
+
         self.logger = logging.getLogger(f"{__name__}.SchemaManager")
         self.schemas: Dict[str, TableDefinition] = {}
+        self.dialect = dialect or SqlServerDialect()
 
     def create_table(self, table_def: TableDefinition) -> str:
         """
-        Generate an idempotent SQL Server CREATE TABLE script (PK CLUSTERED, multisector indexes).
+        Generate an idempotent CREATE TABLE script in the manager's dialect
+        (SQL Server by default: single T-SQL batch, PK CLUSTERED, multisector indexes).
 
         Args:
             table_def: Table definition
 
         Returns:
-            T-SQL script (single batch)
+            DDL script (SQL, or JSON commands for MongoDB)
         """
-        self.logger.info(f"Creating table: {table_def.name}")
-        schema, table = quote_identifier(table_def.schema), quote_identifier(table_def.name)
-        object_name = sql_string(f"{table_def.schema}.{table_def.name}")
-
-        column_lines = []
-        for col in table_def.columns:
-            name = quote_identifier(col.name)
-            nullable = col.nullable and not col.primary_key
-            col_def = f"        {name} {SQLSERVER_TYPES[col.type]} {'NULL' if nullable else 'NOT NULL'}"
-            if col.default:
-                col_def += f" CONSTRAINT [DF_{table_def.name}_{col.name}] DEFAULT {default_literal(col)}"
-            if col.primary_key:
-                col_def += f" CONSTRAINT [PK_{table_def.name}] PRIMARY KEY CLUSTERED"
-            elif col.unique:
-                col_def += f" CONSTRAINT [UQ_{table_def.name}_{col.name}] UNIQUE"
-            if col.type == ColumnType.JSON:
-                col_def += f" CONSTRAINT [CK_{table_def.name}_{col.name}_json] CHECK (ISJSON({name}) = 1)"
-            column_lines.append(col_def)
-
-        if table_def.audit_columns:
-            column_lines.extend([
-                f"        [created_at] DATETIME2 NOT NULL CONSTRAINT [DF_{table_def.name}_created_at] DEFAULT SYSUTCDATETIME()",
-                f"        [updated_at] DATETIME2 NOT NULL CONSTRAINT [DF_{table_def.name}_updated_at] DEFAULT SYSUTCDATETIME()",
-                "        [created_by] NVARCHAR(100) NULL",
-            ])
-
-        description = table_def.description.replace("|", "/").replace("\n", " ") if table_def.description else table_def.name
-        ddl_lines = [
-            f"--| Tabla {table_def.schema}.{table_def.name}: {description} |",
-            f"IF OBJECT_ID({object_name}, N'U') IS NULL",
-            "BEGIN",
-            f"    CREATE TABLE {schema}.{table} (",
-            ",\n".join(column_lines),
-            "    );",
-            "END;",
-        ]
-
-        for flag, column in ((table_def.company_column, "empresa_id"), (table_def.warehouse_column, "bodega_id")):
-            if flag:
-                index = f"idx_{table_def.name}_{column}"
-                ddl_lines.extend([
-                    f"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = {sql_string(index)} AND object_id = OBJECT_ID({object_name}))",
-                    f"    CREATE INDEX [{index}] ON {schema}.{table} ([{column}]);",
-                ])
-
-        if table_def.description:
-            ddl_lines.append(
-                "IF NOT EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID("
-                f"{object_name}) AND minor_id = 0 AND name = N'MS_Description')\n"
-                f"    EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = {sql_string(table_def.description)}, "
-                f"@level0type = N'SCHEMA', @level0name = {sql_string(table_def.schema)}, "
-                f"@level1type = N'TABLE', @level1name = {sql_string(table_def.name)};"
-            )
-
-        sql = "\n".join(ddl_lines)
+        self.logger.info(f"Creating table: {table_def.name} ({self.dialect.nombre})")
+        ddl = self.dialect.create_table(table_def)
         self.schemas[table_def.name] = table_def
         self.logger.debug(f"Generated DDL for {table_def.name}")
-
-        return sql
+        return ddl
 
     def validate_schema(self, table_def: TableDefinition) -> tuple[bool, Optional[str]]:
         """
@@ -287,7 +209,7 @@ class SchemaManager:
                 return False, f"Column {col.name} of type {col.type.value} cannot be PRIMARY KEY or UNIQUE"
             if col.default:
                 try:
-                    default_literal(col)
+                    self.dialect.default_literal(col)
                 except ValueError as e:
                     return False, str(e)
 
@@ -601,16 +523,21 @@ class DatabaseAgent(BaseAgent):
     ) -> DatabaseAgentOutput:
         """Create table operation"""
         table_def = input_data.table_definition
-        
+        schema_manager = self.schema_manager
+        if input_data.motor:
+            from src.agents.database_agent.dialects import get_dialect
+
+            schema_manager = SchemaManager(get_dialect(input_data.motor))
+
         # Validate table definition
-        is_valid, error = self.schema_manager.validate_schema(table_def)
+        is_valid, error = schema_manager.validate_schema(table_def)
         if not is_valid:
             output.status = AgentStatus.FAILED
             output.errors.append(error)
             return output
 
         # Generate DDL
-        ddl_script = self.schema_manager.create_table(table_def)
+        ddl_script = schema_manager.create_table(table_def)
         
         # Log audit entry
         self.audit_logger.log_change(
@@ -634,6 +561,7 @@ class DatabaseAgent(BaseAgent):
         output.result = {
             "table_name": table_def.name,
             "columns": len(table_def.columns),
+            "motor": schema_manager.dialect.motor,
             "ddl_script": ddl_script
         }
 

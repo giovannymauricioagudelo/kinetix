@@ -15,6 +15,12 @@ bcrypt==5.0.0
 pyotp==2.10.0
 qrcode[pil]==8.2
 
+# Nexus (DatabaseAgent): conexiones adicionales (NEXUS_CONEXION_*). Firebird requiere además la
+# librería cliente fbclient; los respaldos usan pg_dump/pg_restore, gbak y mongodump/mongorestore del PATH.
+psycopg2-binary==2.9.9
+pymongo==4.18.2
+firebird-driver==1.10.11
+
 # Synapse (APIsAgent): cifrado de credenciales e importación de OpenAPI en YAML
 cryptography==41.0.7
 PyYAML==6.0.3
