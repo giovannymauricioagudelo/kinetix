@@ -1,0 +1,33 @@
+---
+description: Cada aplicación nueva de la fábrica vive en su propia carpeta y su propio repositorio git
+alwaysApply: true
+---
+
+# Carpeta y repositorio independiente por aplicación
+
+Toda aplicación nueva que salga de Cortex (`tipo_solicitud = nueva_aplicacion`) tiene su **propia carpeta y su propio repositorio git**, separados de `kinetix-studio`. Es la primera tarea del sprint de fundaciones (Orbit), antes de guardar cualquier diseño o código.
+
+## Dónde y cómo
+
+- Carpeta: `D:\Desarrollo\{id_aplicacion}` (hermana de `kinetix-studio`), con el mismo `id_aplicacion` de Cortex y Nexus.
+- `git init -b master`, `git config core.hooksPath .githooks` con una copia de `.githooks/prepare-commit-msg` de Kinetix, e identidad con `git config user.name` / `user.email` **sin** `--global`.
+- Estructura mínima:
+
+```
+README.md            descripción, instalación en 3 pasos y ejemplo de uso (Chronos)
+kinetix.json         id_aplicacion, solicitud de Cortex, modelo de datos, motor, conexión y base en Nexus
+docs/requerimientos.md   prompt o requisitos originales de la solicitud
+database/nexus/      diseños de tablas por grupo (JSON portable de Nexus + SQL complementario)
+.githooks/  .gitignore
+```
+
+- Remoto propio (p. ej. `https://github.com/giovannymauricioagudelo/{id_aplicacion}.git`, privado) creado por el usuario o con `gh`; nunca se publica dentro del remoto de Kinetix.
+
+## Qué va en cada repositorio
+
+- **Repositorio de la aplicación:** requisitos, diseños de Nexus, código, pruebas, documentación y despliegue de esa aplicación.
+- **kinetix-studio:** solo la fábrica (agentes, API, reglas). No se crean carpetas de aplicaciones generadas dentro de `kinetix-studio`.
+
+## Commits
+
+Mismas convenciones de `git-sync-keywords.mdc`: mensaje con el porqué, identificador del sprint (`llavia-sprint-01 (Sprint 1 de 10)`) y marca de tiempo `ddMMyyyy HH:MM:SS` al final (la añade el hook). Las palabras clave de sincronización aplican al repositorio de la aplicación cuando se trabaja en ella.

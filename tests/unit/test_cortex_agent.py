@@ -83,7 +83,8 @@ def test_new_app_data_model_drives_nexus_task(cortex, answer, model):
     request = _answer_all(cortex, request)
     assert request.data_model == model and request.to_dict()["modelo_datos"] == model
     nexus = next(t for t in request.plan if t.agent.codename == "Nexus")
-    assert ("{app}_{empresa}" if model == "por_empresa" else "id_empresa") in nexus.accion
+    app = request.aplicacion or f"app_{request.id.removeprefix('req-')}"
+    assert (f"({app}_{{empresa}})" if model == "por_empresa" else f"({app}) con id_empresa") in nexus.accion
 
 
 def test_unclear_data_model_is_asked_again(cortex):
@@ -191,6 +192,18 @@ def test_medium_new_app_is_split_into_logical_sprints_identified_by_app(cortex):
     assert "PostgreSQL" in foundations["Nexus"]["accion"] and foundations["Prism"]["depende_de"] == ["s01_vector"]
     assert request.to_dict()["progreso_sprints"] == {"aplicacion": "talleres_sicita", "total": 4, "completados": 0,
                                                      "actual": None, "siguiente": "Sprint 1 de 4"}
+
+
+def test_new_app_foundations_start_with_its_own_repository(cortex):
+    request = _medium_app(cortex)
+    tasks = request.to_dict()["sprints"][0]["tareas"]
+    assert tasks[0]["agente"] == "Orbit" and tasks[0]["depende_de"] == []
+    assert "talleres_sicita/" in tasks[0]["accion"] and "repositorio git independiente" in tasks[0]["accion"]
+    foundations = {t["agente"]: t for t in tasks}
+    assert foundations["Nexus"]["depende_de"] == ["s01_orbit"]
+    assert foundations["Vector"]["depende_de"] == ["s01_orbit", "s01_nexus", "s01_sentinel"]
+    assert all("{app}" not in t["accion"] and "{aplicacion}" not in t["accion"] for t in tasks)
+    assert "(talleres_sicita_{empresa})" in foundations["Nexus"]["accion"]
 
 
 def test_unclear_app_id_is_asked_again_and_no_aplica_gets_generated_id(cortex):

@@ -9,7 +9,7 @@ Cuando Cortex evalúa una solicitud con complejidad **media** o **alta**, el pro
 
 - Cada sprint se identifica por aplicación: `{aplicacion}-sprint-NN` (ej. `talleres-sprint-03`) y se muestra como `Sprint 3 de 10`.
 - Aplicación nueva: Cortex pregunta `id_aplicacion` (mismo identificador que la base en Nexus).
-- Orden lógico: fundaciones (Nexus, Sentinel, esqueleto y CI), un sprint por capacidad (reglas, integraciones, interfaz, reportes, IA), y en complejidad alta cumplimiento, rendimiento y piloto; siempre se cierra con salida a producción (Prism, Orbit, Argus).
+- Orden lógico: fundaciones (primero la carpeta y el repositorio independiente de la aplicación con Orbit, ver `apps-repositorio-independiente.mdc`; luego Nexus, Sentinel, esqueleto y CI), un sprint por capacidad (reglas, integraciones, interfaz, reportes, IA), y en complejidad alta cumplimiento, rendimiento y piloto; siempre se cierra con salida a producción (Prism, Orbit, Argus).
 - Cada sprint tiene objetivo, entregable y tareas por agente; se cierra con el entregable demostrado y las pruebas de Prism en verde.
 
 ## Quién decide el ritmo

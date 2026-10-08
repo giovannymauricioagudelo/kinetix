@@ -488,6 +488,8 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
                          "poder cambiar de motor si la aplicación escala."),
         AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación, tablero, listados con "
                           "filtros y exportación, formularios por secciones, detalle y configuración."),
+        VECTOR.codename: ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente, e "
+                          "implementar allí los diseños aprobados; nada de la aplicación se guarda en kinetix-studio."),
     },
     RequestType.SCALE: {
         NEXUS.codename: "Analizar consultas lentas; proponer índices, particionamiento y pools de conexión.",
@@ -524,6 +526,18 @@ Q_NEW_APP_ID = Question(
     "también nombra su base en Nexus.",
 )
 _SLUG = re.compile(r"[^a-z0-9]+")
+
+
+REPOSITORY_ACTION = ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente (rama "
+                     "master, hooks de la fábrica, README, kinetix.json y requisitos); todo lo de la aplicación vive "
+                     "allí, nunca en kinetix-studio.")
+# En fundaciones el repositorio va primero: Nexus guarda allí sus diseños y Vector su código.
+FOUNDATION_DEPENDENCIES: Dict[str, Tuple[AgentProfile, ...]] = {
+    **DEPENDENCIES,
+    ORBIT.codename: (),
+    NEXUS.codename: (ORBIT,),
+    VECTOR.codename: (ORBIT, *DEPENDENCIES[VECTOR.codename]),
+}
 
 
 def sprint_id(aplicacion: str, numero: int) -> str:
@@ -616,10 +630,12 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
     if request.request_type == RequestType.NEW_APP:
         specs: List[SprintSpec] = [(
             "fundaciones", "Fundaciones", "Dejar lista la base técnica: datos, seguridad y esqueleto del proyecto.",
-            "Aplicación registrada en Nexus, autenticación funcionando y pipeline de CI en verde.", (
+            "Repositorio independiente creado, aplicación registrada en Nexus, autenticación funcionando y pipeline de CI en verde.", (
+                (ORBIT, REPOSITORY_ACTION),
                 (NEXUS, nexus_action),
                 (SENTINEL, DEFAULT_ACTIONS[SENTINEL.codename]),
-                (VECTOR, "Crear el esqueleto del proyecto (clean architecture) con autenticación integrada y CI."),
+                (VECTOR, "Crear en el repositorio de {aplicacion} el esqueleto del proyecto (clean architecture) con "
+                         "autenticación integrada y CI."),
                 (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):
@@ -672,6 +688,15 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
              "Prueba que reproduce el error, ahora en verde.", diagnosis),
             ("salida", "Regresión y despliegue", "Asegurar que nada más se rompió y desplegar.", "Corrección en producción.", (
                 (PRISM, "Regresión completa."), (ORBIT, bugfix[ORBIT.codename])))]
+
+
+def _fill_action(action: str, data_model: Optional[str], db_engine: Optional[str], aplicacion: str) -> str:
+    """{modelo} se reemplaza primero porque su etiqueta trae {app}; {empresa} queda como patrón del nombre."""
+    return (action
+            .replace("{modelo}", DATA_MODEL_LABELS.get(data_model or "", "el modelo de datos acordado"))
+            .replace("{motor}", DB_ENGINE_LABELS.get(db_engine or "", "el motor acordado"))
+            .replace("{app}", aplicacion)
+            .replace("{aplicacion}", aplicacion))
 
 
 def _normalize(text: str) -> str:
@@ -835,7 +860,8 @@ class OrchestratorAgent:
             request.status = RequestStatus.NEEDS_CLARIFICATION
         else:
             request.plan = self._build_plan(request.request_type, request.capabilities, request.data_model,
-                                            request.db_engine, request.engine_change)
+                                            request.db_engine, request.engine_change,
+                                            request.aplicacion or f"app_{request.id.removeprefix('req-')}")
             request.sprints = self._build_sprints(request, corpus)
             request.status = RequestStatus.PLAN_PROPOSED
 
@@ -863,15 +889,14 @@ class OrchestratorAgent:
         sprints = []
         for numero, (clave, nombre, objetivo, entregable, tasks) in enumerate(specs, start=1):
             codenames = {agent.codename for agent, _ in tasks}
+            dependencies = FOUNDATION_DEPENDENCIES if clave == "fundaciones" else DEPENDENCIES
             sprints.append(Sprint(
                 numero=numero, total=len(specs), aplicacion=aplicacion, clave=clave, nombre=nombre,
                 objetivo=objetivo, entregable=entregable,
                 tareas=[PlanTask(
                     id=f"s{numero:02d}_{agent.codename.lower()}", agent=agent,
-                    accion=action
-                    .replace("{modelo}", DATA_MODEL_LABELS.get(request.data_model or "", "el modelo de datos acordado"))
-                    .replace("{motor}", DB_ENGINE_LABELS.get(request.db_engine or "", "el motor acordado")),
-                    depends_on=[f"s{numero:02d}_{dep.codename.lower()}" for dep in DEPENDENCIES[agent.codename]
+                    accion=_fill_action(action, request.data_model, request.db_engine, aplicacion),
+                    depends_on=[f"s{numero:02d}_{dep.codename.lower()}" for dep in dependencies[agent.codename]
                                 if dep.codename in codenames],
                 ) for agent, action in tasks],
             ))
@@ -940,7 +965,8 @@ class OrchestratorAgent:
 
     @staticmethod
     def _build_plan(request_type: RequestType, capabilities: List[str], data_model: Optional[str] = None,
-                    db_engine: Optional[str] = None, engine_change: Optional[str] = None) -> List[PlanTask]:
+                    db_engine: Optional[str] = None, engine_change: Optional[str] = None,
+                    aplicacion: str = "la aplicación") -> List[PlanTask]:
         included = {CAPABILITIES[name][0].codename for name in capabilities}
         included.update(agent.codename for agent in ALWAYS_INCLUDED)
         included.update(agent.codename for agent in INCLUDED_BY_TYPE.get(request_type, ()))
@@ -964,9 +990,8 @@ class OrchestratorAgent:
                 PlanTask(
                     id=f"{agent.codename.lower()}_01",
                     agent=agent,
-                    accion=actions.get(agent.codename, DEFAULT_ACTIONS[agent.codename])
-                    .replace("{modelo}", DATA_MODEL_LABELS.get(data_model or "", "el modelo de datos acordado"))
-                    .replace("{motor}", DB_ENGINE_LABELS.get(db_engine or "", "el motor acordado")),
+                    accion=_fill_action(actions.get(agent.codename, DEFAULT_ACTIONS[agent.codename]),
+                                        data_model, db_engine, aplicacion),
                     depends_on=depends_on,
                 )
             )
