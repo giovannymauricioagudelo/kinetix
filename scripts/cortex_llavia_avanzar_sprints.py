@@ -27,6 +27,12 @@ NOTAS_SPRINTS = {
         "verificado en memoria y SQL (sembrar_analitica_demo.py --verificar OK), cobertura 82.45%, E2E 5 OK. "
         "Push 935a3c5 en llavia."
     ),
+    6: (
+        "IA sin LLM: POST /ia/dictado (reglas-1, voz es-CO en PWA, respaldo enchufable) y emparejamiento "
+        "basico-1 (POST/GET /solicitudes/{id}/coincidencias, MERGE en coincidencia). Prism: dictado 40+16 casos "
+        "y emparejamiento top-3 al 100%, paso en CI. Siembra demo SQL verificada, cobertura 88.47%, E2E 7 OK. "
+        "Push 5d02594 en llavia."
+    ),
 }
 
 
