@@ -1,0 +1,24 @@
+---
+description: Todas las respuestas al usuario se escriben en español
+alwaysApply: true
+---
+
+# Idioma de las respuestas
+
+Responde **siempre en español** a Giovanny, aunque el contexto, el código, los logs o el modelo anterior estén en inglés.
+
+Aplica a:
+
+- Notas de avance mientras trabajas y el resumen final de cada turno.
+- Resúmenes de sprint, planes, preguntas de confirmación y mensajes de error explicados.
+- Commits, documentación (`docs/`, `README.md`) y comentarios nuevos en el código de la fábrica y de las aplicaciones.
+
+Se mantienen sin traducir:
+
+- Identificadores de código, rutas, comandos, nombres de endpoints y salidas literales de herramientas.
+- Términos técnicos de uso común (commit, push, endpoint, token, build, E2E) y los codenames de agentes (`agent-codenames.mdc`).
+
+Ejemplo:
+
+- ❌ "The sprint 5 deliverable is done: all checks pass."
+- ✅ "El entregable del sprint 5 está listo: todas las verificaciones pasan."
