@@ -249,6 +249,38 @@ def test_humans_decide_when_each_sprint_starts(cortex):
         cortex.start_sprint(request.id, 5, "giovanny")
 
 
+def test_discarded_request_leaves_app_view_and_blocks_sprints(cortex):
+    stale = cortex.approve(_medium_app(cortex).id, "giovanny")
+    cortex.start_sprint(stale.id, 1, "giovanny")
+    active = cortex.approve(_medium_app(cortex).id, "giovanny")
+    assert len(cortex.sprints_for_app("talleres_sicita")) == 8
+
+    with pytest.raises(ValueError, match="quién descarta"):
+        cortex.discard(stale.id, " ")
+    stale = cortex.discard(stale.id, "giovanny", "Duplicada de una prueba anterior")
+    assert stale.status == RequestStatus.DISCARDED and stale.discard_reason == "Duplicada de una prueba anterior"
+    assert all(s.status.value == "cancelado" for s in stale.sprints)
+    assert "descartada" in stale.to_dict()["siguiente_paso"]
+    assert [r.id for r, _ in cortex.sprints_for_app("talleres_sicita")] == [active.id] * 4
+
+    for blocked in (lambda: cortex.start_sprint(stale.id, 2, "giovanny"),
+                    lambda: cortex.complete_sprint(stale.id, 1, "giovanny"),
+                    lambda: cortex.answer(stale.id, {"objetivo": "otro"}),
+                    lambda: cortex.approve(stale.id, "giovanny"),
+                    lambda: cortex.discard(stale.id, "giovanny")):
+        with pytest.raises(ValueError):
+            blocked()
+
+
+def test_completed_sprints_are_kept_when_discarding(cortex):
+    request = cortex.approve(_medium_app(cortex).id, "giovanny")
+    cortex.start_sprint(request.id, 1, "giovanny")
+    cortex.complete_sprint(request.id, 1, "giovanny")
+    request = cortex.discard(request.id, "giovanny")
+    assert [s.status.value for s in request.sprints] == ["completado", "cancelado", "cancelado", "cancelado"]
+    assert request.discard_reason is None
+
+
 def test_high_complexity_adds_compliance_performance_and_pilot(cortex):
     request = cortex.submit(
         "Crear una aplicación nueva multiempresa para talleres con integración al ERP, reglas de impuestos, "
@@ -301,6 +333,14 @@ def test_api_sprint_flow():
     assert view["sprints"][0]["id_solicitud"] == request_id
     listed = client.get("/api/v1/cortex/requests").json()["solicitudes"]
     assert any(s["aplicacion"] == "inventario" and s["progreso_sprints"]["completados"] == 1 for s in listed)
+
+    discard_url = f"/api/v1/cortex/requests/{request_id}/descartar"
+    assert client.post(discard_url, json={"descartado_por": ""}).status_code == 422
+    discarded = client.post(discard_url, json={"descartado_por": "giovanny", "motivo": "duplicada"}).json()
+    assert discarded["estado"] == "descartada" and discarded["motivo_descarte"] == "duplicada"
+    assert client.post(discard_url, json={"descartado_por": "giovanny"}).status_code == 409
+    assert client.get("/api/v1/cortex/apps/inventario/sprints").json()["total"] == 0
+    assert client.post("/api/v1/cortex/requests/req-x/descartar", json={"descartado_por": "g"}).status_code == 404
 
 
 def test_api_flow():

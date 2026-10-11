@@ -1,4 +1,10 @@
-"""Registra Llavia en Cortex, cierra sprint 1 y 2, inicia sprint 3 (memoria volátil)."""
+"""Reconstruye la solicitud de Llavia en Cortex (memoria volátil) con los sprints ya cerrados y sus notas.
+
+    .\\venv\\Scripts\\python.exe scripts\\cortex_llavia_avanzar_sprints.py
+
+Tras cerrar un sprint nuevo, agrega su nota a NOTAS_SPRINTS para poder reconstruirlo si Cortex se reinicia.
+El siguiente sprint queda pendiente: lo inicia un humano.
+"""
 from __future__ import annotations
 
 import json
@@ -8,9 +14,20 @@ import httpx
 
 from cortex_llavia_cerrar_sprint1 import ANSWERS, BASE, DESC, NOTAS_S1  # type: ignore
 
-NOTAS_S2 = (
-    "Grafo tenant, solicitudes, publicaciones, Habeas SQL, scripts siembra, CI 81%. Push ef6c471."
-)
+NOTAS_SPRINTS = {
+    1: NOTAS_S1,
+    2: "Grafo tenant, solicitudes, publicaciones, Habeas SQL, scripts siembra, CI 81%. Push ef6c471.",
+    3: (
+        "OpenAPI exportado (16 paths), rate limit auth, headers seguridad, clientes WhatsApp/pagos stub-HTTP, "
+        "webhooks HMAC, persistencia factura_suscripcion/pago_suscripcion/destacado, CI >=80%. Push 210a200."
+    ),
+    4: "PWA MFA, destacados, E2E Playwright, GET publicaciones. Push 34e4695 en llavia.",
+    5: (
+        "Tablero Insight GET /reportes/tablero con alcance por rol, pantalla Reportes en PWA, dataset demo "
+        "verificado en memoria y SQL (sembrar_analitica_demo.py --verificar OK), cobertura 82.45%, E2E 5 OK. "
+        "Push 935a3c5 en llavia."
+    ),
+}
 
 
 def main() -> int:
@@ -33,19 +50,15 @@ def main() -> int:
         rid = r.json()["id"]
         c.post(f"{BASE}/requests/{rid}/answers", json={"respuestas": ANSWERS}).raise_for_status()
         c.post(f"{BASE}/requests/{rid}/approve", json={"aprobado_por": "giovanny"}).raise_for_status()
-        c.post(f"{BASE}/requests/{rid}/sprints/1/iniciar", json={"iniciado_por": "giovanny"}).raise_for_status()
-        c.post(
-            f"{BASE}/requests/{rid}/sprints/1/completar",
-            json={"completado_por": "giovanny", "notas": NOTAS_S1},
-        ).raise_for_status()
-        c.post(f"{BASE}/requests/{rid}/sprints/2/iniciar", json={"iniciado_por": "giovanny"}).raise_for_status()
-        c.post(
-            f"{BASE}/requests/{rid}/sprints/2/completar",
-            json={"completado_por": "giovanny", "notas": NOTAS_S2},
-        ).raise_for_status()
-        c.post(f"{BASE}/requests/{rid}/sprints/3/iniciar", json={"iniciado_por": "giovanny"}).raise_for_status()
+        for numero, notas in sorted(NOTAS_SPRINTS.items()):
+            c.post(f"{BASE}/requests/{rid}/sprints/{numero}/iniciar", json={"iniciado_por": "giovanny"}).raise_for_status()
+            c.post(
+                f"{BASE}/requests/{rid}/sprints/{numero}/completar",
+                json={"completado_por": "giovanny", "notas": notas},
+            ).raise_for_status()
         final = c.get(f"{BASE}/requests/{rid}").json()
-    print(json.dumps({"request_id": rid, "progreso": final.get("progreso_sprints")}, ensure_ascii=False, indent=2))
+    print(json.dumps({"request_id": rid, "progreso": final.get("progreso_sprints"),
+                      "siguiente_paso": final.get("siguiente_paso")}, ensure_ascii=False, indent=2))
     return 0
 
 

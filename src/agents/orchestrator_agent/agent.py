@@ -57,6 +57,7 @@ class RequestStatus(str, Enum):
     PLAN_PROPOSED = "plan_propuesto"
     APPROVED = "aprobado"
     COMPLETED = "completada"
+    DISCARDED = "descartada"
 
 
 class TaskStatus(str, Enum):
@@ -72,6 +73,7 @@ class SprintStatus(str, Enum):
     PENDING = "pendiente"
     IN_PROGRESS = "en_curso"
     DONE = "completado"
+    CANCELLED = "cancelado"
 
 
 @dataclass(frozen=True)
@@ -169,6 +171,9 @@ class OrchestrationRequest:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
+    discarded_by: Optional[str] = None
+    discarded_at: Optional[str] = None
+    discard_reason: Optional[str] = None
     data_model: Optional[str] = None
     db_engine: Optional[str] = None
     db_engine_reason: Optional[str] = None
@@ -188,6 +193,8 @@ class OrchestrationRequest:
         return next((s for s in self.sprints if s.status in (SprintStatus.PLANNED, SprintStatus.PENDING)), None)
 
     def _next_step(self) -> str:
+        if self.status == RequestStatus.DISCARDED:
+            return "Solicitud descartada: no se ejecuta ni cuenta en el progreso de la aplicación."
         if self.status == RequestStatus.NEEDS_CLARIFICATION:
             return "Responde las preguntas pendientes para que Cortex pueda proponer un plan."
         if self.status == RequestStatus.PLAN_PROPOSED:
@@ -239,6 +246,9 @@ class OrchestrationRequest:
             "sprints": [s.to_dict() for s in self.sprints],
             "aprobado_por": self.approved_by,
             "aprobado_en": self.approved_at,
+            "descartado_por": self.discarded_by,
+            "descartado_en": self.discarded_at,
+            "motivo_descarte": self.discard_reason,
             "creado_en": self.created_at,
             "siguiente_paso": self._next_step(),
         }
@@ -739,6 +749,8 @@ class OrchestratorAgent:
 
     def answer(self, request_id: str, answers: Dict[str, str]) -> OrchestrationRequest:
         request = self.get(request_id)
+        if request.status == RequestStatus.DISCARDED:
+            raise ValueError("La solicitud está descartada; crea una nueva.")
         if request.status in (RequestStatus.APPROVED, RequestStatus.COMPLETED):
             raise ValueError("La solicitud ya fue aprobada; crea una nueva para cambiar el alcance.")
         for key, value in answers.items():
@@ -751,6 +763,8 @@ class OrchestratorAgent:
 
     def approve(self, request_id: str, approved_by: str) -> OrchestrationRequest:
         request = self.get(request_id)
+        if request.status == RequestStatus.DISCARDED:
+            raise ValueError("La solicitud está descartada; crea una nueva.")
         if request.status != RequestStatus.PLAN_PROPOSED:
             raise ValueError("Solo se puede aprobar una solicitud con plan propuesto.")
         if not approved_by or not approved_by.strip():
@@ -776,6 +790,8 @@ class OrchestratorAgent:
         request = self.get(request_id)
         if not request.sprints:
             raise ValueError("Esta solicitud no se ejecuta por sprints (complejidad baja).")
+        if request.status == RequestStatus.DISCARDED:
+            raise ValueError("La solicitud está descartada; sus sprints no se pueden iniciar ni completar.")
         if request.status in (RequestStatus.NEEDS_CLARIFICATION, RequestStatus.PLAN_PROPOSED):
             raise ValueError("Aprueba el plan antes de iniciar sprints.")
         if not 1 <= numero <= len(request.sprints):
@@ -816,10 +832,30 @@ class OrchestratorAgent:
                 task.status = TaskStatus.DONE
         return request
 
+    def discard(self, request_id: str, discarded_by: str, motivo: Optional[str] = None) -> OrchestrationRequest:
+        """Saca de circulación una solicitud duplicada o abandonada sin marcar como hecho lo que no se hizo."""
+        if not discarded_by or not discarded_by.strip():
+            raise ValueError("Indica quién descarta la solicitud.")
+        request = self.get(request_id)
+        if request.status in (RequestStatus.COMPLETED, RequestStatus.DISCARDED):
+            raise ValueError(f"La solicitud está {request.status.value}; no se puede descartar.")
+        request.status = RequestStatus.DISCARDED
+        request.discarded_by, request.discarded_at = discarded_by.strip(), datetime.utcnow().isoformat()
+        request.discard_reason = motivo.strip() if motivo and motivo.strip() else None
+        for sprint in request.sprints:
+            if sprint.status != SprintStatus.DONE:
+                sprint.status = SprintStatus.CANCELLED
+        return request
+
     def sprints_for_app(self, aplicacion: str) -> List[Tuple[OrchestrationRequest, Sprint]]:
-        """Todos los sprints de una aplicación, solicitud por solicitud, en orden de creación."""
+        """Sprints de una aplicación, solicitud por solicitud en orden de creación, sin las descartadas."""
         key = aplicacion.strip().lower()
-        return [(r, s) for r in self._requests.values() if (r.aplicacion or "").lower() == key for s in r.sprints]
+        return [
+            (r, s)
+            for r in self._requests.values()
+            if (r.aplicacion or "").lower() == key and r.status != RequestStatus.DISCARDED
+            for s in r.sprints
+        ]
 
     def get(self, request_id: str) -> OrchestrationRequest:
         if request_id not in self._requests:

@@ -30,6 +30,11 @@ class ApprovalBody(BaseModel):
     aprobado_por: str = Field(..., min_length=1)
 
 
+class DiscardBody(BaseModel):
+    descartado_por: str = Field(..., min_length=1)
+    motivo: Optional[str] = Field(None, max_length=500, description="Por qué se descarta (duplicada, abandonada…).")
+
+
 class SprintStartBody(BaseModel):
     iniciado_por: str = Field(..., min_length=1)
 
@@ -118,6 +123,16 @@ async def approve_plan(request_id: str, body: ApprovalBody) -> Dict[str, Any]:
     _get_or_404(request_id)
     try:
         return _cortex.approve(request_id, body.aprobado_por).to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/requests/{request_id}/descartar")
+async def discard_request(request_id: str, body: DiscardBody) -> Dict[str, Any]:
+    """Descarta una solicitud duplicada o abandonada; sus sprints sin terminar quedan cancelados."""
+    _get_or_404(request_id)
+    try:
+        return _cortex.discard(request_id, body.descartado_por, body.motivo).to_dict()
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
