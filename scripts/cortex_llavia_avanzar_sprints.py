@@ -41,6 +41,13 @@ NOTAS_SPRINTS = {
         "verificar_cumplimiento.py 12/12 en SQL, 240 pruebas, cobertura 90.33%, E2E 7 OK, docs/cumplimiento.md. "
         "Push 7b6b05f en llavia."
     ),
+    8: (
+        "Rendimiento: 500 usuarios concurrentes dentro del objetivo (lecturas p95 228 ms, escrituras p95 891 ms, "
+        "0% errores, 240 pet/s; linea base 52 pet/s y p95 21 s). Indices grupo 09 (104), auditoria por lotes (105) "
+        "y sellada en la base (106), RCSI desde Nexus, pool de conexiones propio (login SQL 2025 con PBKDF2), "
+        "tablero en cache 5 min con recalculo en segundo plano. Prism prueba_carga multiproceso, Argus /metricas, "
+        "verificar_cumplimiento 15/15, 276 pruebas, cobertura 91.8%, docs/rendimiento.md. Push a2bc328 en llavia."
+    ),
 }
 
 

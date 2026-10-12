@@ -426,11 +426,12 @@ class NexusAppService:
     def _deploy_one(self, app: Application, server: Server, db: AppDatabase, migrations: List[Migration],
                     companies: List, actor: str) -> Dict[str, Any]:
         started = self._clock()
-        created, error = False, None
+        created, snapshot, error = False, False, None
         try:
             result = server.provisioner.deploy(db.nombre_base, migrations, companies, actor)
             created, applied, version = result.created, result.applied, result.version
-            status = "exitoso" if applied or created else "sin_cambios"
+            snapshot = result.snapshot_enabled
+            status = "exitoso" if applied or created or snapshot else "sin_cambios"
             self._registry.update_database(db.nombre_base, "desplegada", version, None, self._clock())
         except ProvisionError as e:
             applied, error, status = e.applied, str(e)[:1000], "fallido"
@@ -442,7 +443,7 @@ class NexusAppService:
             ejecutado_por=actor, fecha_inicio=started, fecha_fin=self._clock(),
         )
         self._registry.record_deployment(deployment)
-        return {**self._deployment_view(deployment), "base_creada": created}
+        return {**self._deployment_view(deployment), "base_creada": created, "read_committed_snapshot_activado": snapshot}
 
     def deployments(self, owner: str, id_aplicacion: str, limit: int) -> Dict[str, Any]:
         app = self._get(id_aplicacion, owner)

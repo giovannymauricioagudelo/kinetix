@@ -40,6 +40,7 @@ class DeployResult:
     created: bool
     applied: List[int] = field(default_factory=list)
     version: int = 0
+    snapshot_enabled: bool = False
 
 
 class Provisioner(ABC):
@@ -142,6 +143,21 @@ class SqlServerProvisioner(Provisioner):
         finally:
             conn.close()
 
+    def _ensure_read_committed_snapshot(self, database: str) -> bool:
+        """Aislamiento estándar de Atlas: con READ_COMMITTED_SNAPSHOT las lecturas no esperan a las escrituras en curso.
+        Se activa una sola vez (al crear la base o en el primer despliegue); ROLLBACK IMMEDIATE corta las transacciones
+        abiertas en ese momento. Devuelve True si tuvo que activarlo."""
+        conn = self._connect("master", autocommit=True)
+        try:
+            cur = conn.cursor()
+            row = cur.execute("SELECT is_read_committed_snapshot_on FROM sys.databases WHERE name = ?", (database,)).fetchone()
+            if row is None or row[0]:
+                return False
+            cur.execute(f"ALTER DATABASE {quote_identifier(database)} SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE")
+            return True
+        finally:
+            conn.close()
+
     def deploy(self, database, migrations, companies, actor) -> DeployResult:
         import pyodbc
 
@@ -149,6 +165,7 @@ class SqlServerProvisioner(Provisioner):
 
         try:
             created = self._create_if_missing(database)
+            snapshot_enabled = self._ensure_read_committed_snapshot(database)
             conn = self._connect(database, autocommit=False)
         except pyodbc.Error as e:
             raise ProvisionError(f"No se pudo crear o abrir {database}: {server_message(e)}")
@@ -184,7 +201,7 @@ class SqlServerProvisioner(Provisioner):
                 cur.execute("INSERT INTO dbo.empresas (id_empresa, nombre) SELECT ?, ? "
                             "WHERE NOT EXISTS (SELECT 1 FROM dbo.empresas WHERE id_empresa = ?)", (id_empresa, nombre, id_empresa))
             conn.commit()
-            return DeployResult(created, done, max(applied, default=0))
+            return DeployResult(created, done, max(applied, default=0), snapshot_enabled)
         except pyodbc.Error as e:
             conn.rollback()
             raise ProvisionError(f"Error desplegando {database}: {server_message(e)}", done)
