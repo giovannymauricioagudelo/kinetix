@@ -168,6 +168,63 @@ def test_failed_migration_marks_database_and_is_logged():
     assert nexus.deployments("gio", "inv", 10)["total"] == 1
 
 
+def test_environment_gets_same_migrations_and_only_chosen_companies(nexus, provisioner):
+    nexus.register_app("ana", "gio", {"id_aplicacion": "citas", "nombre": "Citas", "motor": "sqlserver", "modelo_datos": "multiempresa",
+                                      "empresas": [{"id_empresa": "plataforma", "nombre": "Plataforma"},
+                                                   {"id_empresa": "carga", "nombre": "Carga"}]})
+    nexus.table("ana", "gio", "citas", CLIENTES)
+    nexus.deploy("ana", "gio", "citas")
+    nexus.add_company("ana", "gio", "citas", {"id_empresa": "piloto", "nombre": "Piloto"})
+
+    piloto = nexus.deploy_environment("ana", "gio", "citas", "piloto", ["plataforma", "piloto", "piloto"])
+    assert piloto["nombre_base"] == "citas_piloto" and piloto["empresas"] == ["plataforma", "piloto"]
+    assert piloto["despliegue"]["migraciones_aplicadas"] == [1, 2] and piloto["despliegue"]["base_creada"]
+    assert provisioner.companies["citas_piloto"] == {"plataforma", "piloto"}
+    assert provisioner.companies["citas"] == {"plataforma", "carga"}
+    assert [d["nombre_base"] for d in nexus.get_app("gio", "citas")["bases_datos"]] == ["citas"]
+
+    nexus.add_migration("ana", "gio", "citas", {"nombre": "agregar_nota", "script": "SELECT 1"})
+    assert nexus.environments("gio", "citas")["entornos"] == [
+        {"entorno": "piloto", "nombre_base": "citas_piloto", "version": 2, "migraciones_pendientes": 1,
+         "ultimo_despliegue": nexus.deployments("gio", "citas", 1)["despliegues"][0]}]
+    again = nexus.deploy_environment("ana", "gio", "citas", "piloto", ["plataforma", "piloto"])
+    assert again["despliegue"]["migraciones_aplicadas"] == [3] and not again["despliegue"]["base_creada"]
+    assert nexus.get_app("gio", "citas")["bases_datos"][0]["migraciones_pendientes"] == 1
+    assert nexus.environments("gio", "citas")["entornos"][0]["version"] == 3
+
+
+def test_environment_rejects_bad_names_unknown_companies_and_foreign_databases():
+    nexus = NexusAppService(InMemoryAppRegistry(), InMemoryProvisioner(existing=("aje_na",)))
+    nexus.register_app("ana", "gio", {"id_aplicacion": "aje", "nombre": "A", "motor": "sqlserver", "modelo_datos": "multiempresa",
+                                      "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
+    for bad in ("Piloto", "1x", "p", "con_guion", "x" * 21):
+        with pytest.raises(InvalidInputError):
+            nexus.deploy_environment("ana", "gio", "aje", bad, ["acme"])
+    with pytest.raises(InvalidInputError):
+        nexus.deploy_environment("ana", "gio", "aje", "piloto", [])
+    with pytest.raises(NotFoundError, match="nadie"):
+        nexus.deploy_environment("ana", "gio", "aje", "piloto", ["acme", "nadie"])
+    with pytest.raises(ConflictError, match="no la gestiona Nexus"):
+        nexus.deploy_environment("ana", "gio", "aje", "na", ["acme"])
+
+    nexus.register_app("ana", "gio", {"id_aplicacion": "talleres", "nombre": "T", "motor": "sqlserver", "modelo_datos": "por_empresa",
+                                      "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
+    with pytest.raises(InvalidInputError, match="multiempresa"):
+        nexus.deploy_environment("ana", "gio", "talleres", "piloto", ["acme"])
+
+
+def test_failed_environment_deploy_keeps_last_known_version():
+    nexus = NexusAppService(InMemoryAppRegistry(), InMemoryProvisioner(fail_marker="FALLA"))
+    nexus.register_app("ana", "gio", {"id_aplicacion": "inv", "nombre": "Inv", "motor": "sqlserver", "modelo_datos": "multiempresa",
+                                      "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
+    assert nexus.deploy_environment("ana", "gio", "inv", "piloto", ["acme"])["despliegue"]["version_resultante"] == 1
+    nexus.add_migration("ana", "gio", "inv", {"nombre": "rota", "script": "SELECT 'FALLA'"})
+    failed = nexus.deploy_environment("ana", "gio", "inv", "piloto", ["acme"])["despliegue"]
+    assert failed["estado"] == "fallido" and failed["version_resultante"] == 1 and "rota" in failed["detalle"]
+    assert nexus.environments("gio", "inv")["entornos"][0]["migraciones_pendientes"] == 1
+    assert nexus.get_app("gio", "inv")["bases_datos"][0]["estado"] == "pendiente"
+
+
 # ============================================================================ API
 
 
@@ -207,3 +264,22 @@ def test_api_registers_deploys_and_audits(api):
 
     _, entries = repo.list_audit("gio", None, None, None, None, None, 50, 0)
     assert {"nexus_registrar_aplicacion", "nexus_definir_tabla", "nexus_desplegar_aplicacion"} <= {e.accion for e in entries}
+
+
+def test_api_deploys_environment_and_audits(api):
+    client, repo = api
+    url = "/api/v1/nexus/aplicaciones"
+    auth = headers(client)
+    client.post(url, json={"id_aplicacion": "llaves", "nombre": "Llaves", "motor": "sqlserver", "modelo_datos": "multiempresa",
+                           "empresas": [{"id_empresa": "piloto", "nombre": "Piloto"}]}, headers=auth)
+    assert client.post(f"{url}/llaves/entornos/piloto/desplegar", json={"empresas": []}, headers=auth).status_code == 422
+    assert client.post(f"{url}/llaves/entornos/piloto/desplegar", json={"empresas": ["piloto"]},
+                       headers=headers(client, "luis")).status_code == 403
+    deployed = client.post(f"{url}/llaves/entornos/piloto/desplegar", json={"empresas": ["piloto"]}, headers=auth)
+    assert deployed.status_code == 200
+    assert deployed.json()["nombre_base"] == "llaves_piloto" and deployed.json()["despliegue"]["estado"] == "exitoso"
+    listed = client.get(f"{url}/llaves/entornos", headers=auth).json()
+    assert listed["total"] == 1 and listed["entornos"][0]["version"] == 1
+
+    _, entries = repo.list_audit("gio", None, None, None, None, None, 50, 0)
+    assert any(e.accion == "nexus_desplegar_entorno" and "llaves_piloto v1=exitoso" in (e.detalles or "") for e in entries)

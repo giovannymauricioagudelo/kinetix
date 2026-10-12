@@ -53,6 +53,8 @@ __all__ = ["NexusAppService", "BASE_MULTIEMPRESA", "validate_script", "database_
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{1,29}$")
 COMPANY_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,29}$")
 MIGRATION_NAME = re.compile(r"^[a-z0-9][a-z0-9_]{0,99}$")
+ENVIRONMENT_ID = re.compile(r"^[a-z][a-z0-9]{1,19}$")
+ENVIRONMENT_HISTORY = 500
 RESERVED_DATABASES = frozenset({"master", "model", "msdb", "tempdb", "kinetix", "distribution", "ssisdb",
                                 "postgres", "template0", "template1", "admin", "local", "config"})
 RESERVED_SCHEMAS = frozenset({"seguridad", "despliegue", "sys", "information_schema", "pg_catalog"})
@@ -424,7 +426,7 @@ class NexusAppService:
                 "bases": len(results), "fallidas": failed, "despliegues": results}
 
     def _deploy_one(self, app: Application, server: Server, db: AppDatabase, migrations: List[Migration],
-                    companies: List, actor: str) -> Dict[str, Any]:
+                    companies: List, actor: str, registered: bool = True) -> Dict[str, Any]:
         started = self._clock()
         created, snapshot, error = False, False, None
         try:
@@ -432,11 +434,13 @@ class NexusAppService:
             created, applied, version = result.created, result.applied, result.version
             snapshot = result.snapshot_enabled
             status = "exitoso" if applied or created or snapshot else "sin_cambios"
-            self._registry.update_database(db.nombre_base, "desplegada", version, None, self._clock())
+            if registered:
+                self._registry.update_database(db.nombre_base, "desplegada", version, None, self._clock())
         except ProvisionError as e:
             applied, error, status = e.applied, str(e)[:1000], "fallido"
             version = max([db.version, *applied])
-            self._registry.update_database(db.nombre_base, "error", version, error, self._clock())
+            if registered:
+                self._registry.update_database(db.nombre_base, "error", version, error, self._clock())
         deployment = Deployment(
             id_despliegue=new_id("dep"), id_aplicacion=app.id_aplicacion, nombre_base=db.nombre_base, estado=status,
             id_empresa=db.id_empresa, migraciones_aplicadas=list(applied), version_resultante=version, detalle=error,
@@ -449,6 +453,64 @@ class NexusAppService:
         app = self._get(id_aplicacion, owner)
         found = self._registry.deployments(app.id_aplicacion, limit)
         return {"total": len(found), "despliegues": [self._deployment_view(d) for d in found]}
+
+    # ================================================================ entornos
+
+    def _environment_database(self, app: Application, entorno: str) -> str:
+        if app.modelo_datos != "multiempresa":
+            raise InvalidInputError("Los entornos son para aplicaciones multiempresa: en por_empresa cada empresa ya tiene su base")
+        if not ENVIRONMENT_ID.match(entorno or ""):
+            raise InvalidInputError("entorno: minúscula inicial y luego minúsculas o números (2 a 20)")
+        return database_name(app.id_aplicacion, entorno)
+
+    def _environment_deployments(self, app: Application) -> Dict[str, List[Deployment]]:
+        """Bases de entorno = las que aparecen en la bitácora sin estar registradas como base de la aplicación."""
+        registered = {d.nombre_base for d in self._registry.databases(app.id_aplicacion)}
+        found: Dict[str, List[Deployment]] = {}
+        for d in self._registry.deployments(app.id_aplicacion, ENVIRONMENT_HISTORY):
+            if d.nombre_base not in registered:
+                found.setdefault(d.nombre_base, []).append(d)
+        return found
+
+    def deploy_environment(self, actor: str, owner: str, id_aplicacion: str, entorno: str,
+                           empresas: List[str]) -> Dict[str, Any]:
+        """Lleva las migraciones de la aplicación a otra base del mismo servidor ({app}_{entorno}: piloto, staging...)
+        con solo las empresas indicadas. La base de la aplicación no se toca y la versión vive en la base del entorno."""
+        app = self._get(id_aplicacion, owner)
+        name = self._environment_database(app, entorno)
+        self._ensure_no_change(app)
+        registered = {c.id_empresa: c.nombre for c in self._registry.companies(app.id_aplicacion)}
+        chosen = list(dict.fromkeys(empresas or []))
+        if not chosen:
+            raise InvalidInputError("Indica las empresas del entorno (deben estar registradas en la aplicación)")
+        unknown = [c for c in chosen if c not in registered]
+        if unknown:
+            raise NotFoundError(f"Empresas no registradas en {app.id_aplicacion}: {', '.join(unknown)}")
+        server = self._server(app)
+        history = self._environment_deployments(app).get(name)
+        if not history:
+            self._ensure_free(name, server)
+        migrations = self._registry.migrations(app.id_aplicacion)
+        deployable = self._deployable(app, migrations, app.motor)
+        database = AppDatabase(nombre_base=name, id_aplicacion=app.id_aplicacion,
+                               version=history[0].version_resultante if history else 0)
+        result = self._deploy_one(app, server, database, deployable, [(c, registered[c]) for c in chosen], actor,
+                                  registered=False)
+        return {"id_aplicacion": app.id_aplicacion, "entorno": entorno, "nombre_base": name, "empresas": chosen,
+                "motor": app.motor, "conexion": app.conexion,
+                "version_objetivo": max((m.numero for m in migrations), default=0), "despliegue": result}
+
+    def environments(self, owner: str, id_aplicacion: str) -> Dict[str, Any]:
+        app = self._get(id_aplicacion, owner)
+        latest = max((m.numero for m in self._registry.migrations(app.id_aplicacion, with_script=False)), default=0)
+        prefix = f"{app.id_aplicacion}_"
+        items = []
+        for name, history in sorted(self._environment_deployments(app).items()):
+            version = history[0].version_resultante
+            items.append({"entorno": name[len(prefix):] if name.startswith(prefix) else name, "nombre_base": name,
+                          "version": version, "migraciones_pendientes": max(latest - version, 0),
+                          "ultimo_despliegue": self._deployment_view(history[0])})
+        return {"total": len(items), "entornos": items}
 
     # ================================================================ cambio de motor
 

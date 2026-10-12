@@ -99,6 +99,11 @@ class DeployBody(BaseModel):
     id_empresa: Optional[str] = Field(None, max_length=30, description="Solo por_empresa: despliega únicamente esa base")
 
 
+class EnvironmentDeployBody(BaseModel):
+    empresas: List[str] = Field(..., min_length=1, max_length=50,
+                                description="Empresas registradas de la aplicación que existen en el entorno")
+
+
 class EquivalentBody(BaseModel):
     motor: str = Field(..., description=" | ".join(MOTORES))
     script: str = Field(..., min_length=1, description="Mismo efecto que la migración original, escrito para ese motor")
@@ -403,6 +408,33 @@ def application_deployments(id_aplicacion: str, limite: int = Query(20, ge=1, le
                             apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:
     with translate_errors(UNAVAILABLE):
         return _ok(apps.deployments(principal.id_empresa, id_aplicacion, limite))
+
+
+@router.post("/aplicaciones/{id_aplicacion}/entornos/{entorno}/desplegar")
+def deploy_environment(
+    id_aplicacion: str,
+    entorno: str,
+    body: EnvironmentDeployBody,
+    request: Request,
+    principal: Principal = Depends(_can_deploy_apps),
+    apps: NexusAppService = Depends(get_nexus_apps_service),
+    security: SecurityService = Depends(get_security_service),
+) -> Dict[str, Any]:
+    """Base {app}_{entorno} (piloto, staging...) con las migraciones de la aplicación y solo las empresas indicadas."""
+    with translate_errors(UNAVAILABLE):
+        result = apps.deploy_environment(principal.nombre_usuario, principal.id_empresa, id_aplicacion, entorno, body.empresas)
+        d = result["despliegue"]
+        security.record_audit(principal, "nexus_desplegar_entorno", f"aplicacion:{id_aplicacion}",
+                              f"{result['nombre_base']} v{result['version_objetivo']}={d['estado']} "
+                              f"empresas {','.join(result['empresas'])}"[:1000], ip=_ip(request))
+        return _ok(result)
+
+
+@router.get("/aplicaciones/{id_aplicacion}/entornos")
+def application_environments(id_aplicacion: str, principal: Principal = Depends(_can_view_apps),
+                             apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:
+    with translate_errors(UNAVAILABLE):
+        return _ok(apps.environments(principal.id_empresa, id_aplicacion))
 
 
 @router.post("/aplicaciones/{id_aplicacion}/migraciones/{numero}/equivalentes", status_code=201)
