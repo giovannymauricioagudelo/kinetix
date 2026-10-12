@@ -33,6 +33,14 @@ NOTAS_SPRINTS = {
         "y emparejamiento top-3 al 100%, paso en CI. Siembra demo SQL verificada, cobertura 88.47%, E2E 7 OK. "
         "Push 5d02594 en llavia."
     ),
+    7: (
+        "Cumplimiento: solicitudes del titular con plazos Ley 1581 en dias habiles (br_hd_005-008), auditoria "
+        "encadenada SHA-256 inalterable y verificable, RBAC por endpoint con denegados auditados, MFA por rol "
+        "(br_seg_001) y MFA reciente 15 min para exportar/auditoria, exportacion CSV auditada, retencion "
+        "(archivar 10 anios). Matrix catalog_sprint07. Prism: bandit/pip-audit/npm audit en CI (0 hallazgos), "
+        "verificar_cumplimiento.py 12/12 en SQL, 240 pruebas, cobertura 90.33%, E2E 7 OK, docs/cumplimiento.md. "
+        "Push 7b6b05f en llavia."
+    ),
 }
 
 
