@@ -148,10 +148,16 @@ def test_redaction_code_extraction_and_text_review():
     sql = "DELETE FROM clientes;\nUPDATE t SET a = 1 WHERE id = @id;\nDROP TABLE x;\nSELECT * FROM y"
     result = review.review_text(sql, "sql", "x.sql")
     rules = [f["regla"] for f in result["hallazgos"]]
-    assert sorted(rules) == ["sql_drop", "sql_select_asterisco", "sql_sin_where"] and result["por_severidad"]["critica"] == 1
+    assert sorted(rules) == ["sql_drop", "sql_fuera_de_procedimiento", "sql_select_asterisco", "sql_sin_where"]
+    assert result["por_severidad"]["critica"] == 1
     cascade = "ALTER TABLE a ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES c(id) ON DELETE CASCADE ON UPDATE NO ACTION;"
     assert review.review_text(cascade, "sql", "x.sql")["total_hallazgos"] == 0
+    procedure = "CREATE OR ALTER PROCEDURE app.cliente_desactivar @id INT AS BEGIN UPDATE dbo.clientes SET activo = 0 WHERE id = @id; END"
+    assert review.review_text(procedure, "sql", "x.sql")["total_hallazgos"] == 0
     assert review.review_text('const apiKey = "abcdef1234567890xyz";', "typescript", "a.ts")["por_severidad"]["critica"] == 1
+    inline = review.review_text('await db.query("SELECT id FROM clientes WHERE id = $1", [id]);', "typescript", "a.ts")
+    assert [f["regla"] for f in inline["hallazgos"]] == ["sql_en_linea"]
+    assert review.review_text('await db.query("EXEC app.cliente_obtener @id = ?", [id]);', "typescript", "a.ts")["total_hallazgos"] == 0
     assert review.review_text("const token = process.env.API_TOKEN_VALUE;", "typescript", "a.ts")["total_hallazgos"] == 0
 
 
@@ -262,7 +268,7 @@ def test_generation_is_reviewed_by_vector_and_committed_to_a_branch(llm, vector)
     llm.queues["anthropic"] = ["```sql\nDELETE FROM clientes;\n```", "```sql\nDROP TABLE clientes;\n```"]
     sql = service.generate("ana", "gio", {"tipo": "sql", "descripcion": "Borra los clientes inactivos"})
     assert sql["commiteable"] and sql["generacion"]["ruta_sugerida"].startswith("sql/genesis/")
-    assert [f["regla"] for f in sql["generacion"]["analisis"]["hallazgos"]] == ["sql_sin_where"]
+    assert [f["regla"] for f in sql["generacion"]["analisis"]["hallazgos"]] == ["sql_sin_where", "sql_fuera_de_procedimiento"]
     assert not service.generate("ana", "gio", {"tipo": "sql", "descripcion": "Elimina la tabla de clientes"})["commiteable"]
     assert service.list_generations("gio")["total"] == 4 and "contenido" not in service.list_generations("gio")["generaciones"][0]
 

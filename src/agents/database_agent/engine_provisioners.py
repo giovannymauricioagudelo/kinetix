@@ -2,6 +2,8 @@
 
 Igual que en SQL Server: crean la base de la aplicación si falta, llevan el historial de migraciones con su
 checksum dentro de la propia base, aplican en orden las pendientes y sincronizan la tabla de empresas.
+
+acceso-datos: excepcion-administracion (despliegue de migraciones de Nexus, con credencial de administrador)
 """
 
 from __future__ import annotations

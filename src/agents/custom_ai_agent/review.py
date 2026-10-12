@@ -24,6 +24,10 @@ _SQL_RULES = (
     ("alta", "sql_dinamico", re.compile(r"(?i)\bEXEC(UTE)?\s*\(\s*(@|'[^']*'\s*\+)"), "SQL dinámico armado por concatenación"),
     ("media", "sql_select_asterisco", re.compile(r"(?i)\bSELECT\s+\*"), "SELECT * (columnas explícitas son más estables)"),
 )
+_DATA_SQL = re.compile(r"(?is)(?<!ON\s)(?<!FOR\s)(?<!AFTER\s)(?<!OF\s)(?<!,\s)\b(INSERT\s+INTO|UPDATE\s+[\w.\[\]]+\s+SET"
+                       r"|DELETE\s+(FROM\s+)?[\w.\[\]]+|MERGE\s+(INTO\s+)?[\w.\[\]]+|SELECT\b[^;]*?\bFROM\b)")
+_PROCEDURE = re.compile(r"(?i)\bCREATE\s+(OR\s+ALTER\s+)?PROC(EDURE)?\b")
+_INLINE_SQL = re.compile(r"""(?is)["'`]\s*(SELECT\b[^"'`]*?\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[\w.\[\]]+\s+SET\b|DELETE\s+FROM\b|MERGE\s+INTO\b)""")
 _STATEMENT = re.compile(r"(?is)(?<!ON\s)(?<!FOR\s)(?<!AFTER\s)(?<!OF\s)(?<!,\s)\b(DELETE|UPDATE)\b(?!\s*\()(.*?)(?=;|\bGO\b|\Z)")
 
 
@@ -65,6 +69,15 @@ def review_text(content: str, language: str, path: str) -> Dict[str, Any]:
             if not re.search(r"(?i)\bWHERE\b", match.group(2)):
                 findings.append({"archivo": path, "linea": _line(content, match.start()), "severidad": "alta", "regla": "sql_sin_where",
                                  "mensaje": f"{match.group(1).upper()} sin WHERE afecta todas las filas"})
+        data = _DATA_SQL.search(content)
+        if data and not _PROCEDURE.search(content):
+            findings.append({"archivo": path, "linea": _line(content, data.start()), "severidad": "alta",
+                             "regla": "sql_fuera_de_procedimiento",
+                             "mensaje": "Acceso a datos fuera de un procedimiento almacenado; la aplicación solo ejecuta procedimientos"})
+    else:
+        for match in _INLINE_SQL.finditer(content):
+            findings.append({"archivo": path, "linea": _line(content, match.start()), "severidad": "critica", "regla": "sql_en_linea",
+                             "mensaje": "SQL de datos en el código; llama un procedimiento almacenado (EXEC app.…) con parámetros"})
     for pattern in _SECRETS:
         for match in pattern.finditer(content):
             value = match.group(3)

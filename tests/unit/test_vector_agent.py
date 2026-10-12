@@ -39,8 +39,8 @@ def test_analyzer_finds_security_and_reliability_issues():
     result = analyzer.analyze_files({"src/riesgo.py": RISKY})
     found = rules(result)
     assert {"ejecucion_dinamica", "secreto_en_codigo", "comando_shell", "sql_interpolado", "http_sin_timeout",
-            "except_desnudo"} <= found
-    assert result["por_severidad"]["critica"] == 2
+            "except_desnudo", "sql_en_linea"} <= found
+    assert result["por_severidad"]["critica"] == 3
     assert not any("TOKEN_TYPE" in f["mensaje"] for f in result["hallazgos"])
     assert 0 <= result["puntuacion"] < 10
 
@@ -52,11 +52,32 @@ CONN = "Server=x;PWD=${DB_PASSWORD}"
 
 def get(cursor, uid):
     """Lee un usuario."""
-    cursor.execute("SELECT * FROM usuarios WHERE id = ?", (uid,))
+    cursor.execute("EXEC app.usuario_obtener @id = ?", (uid,))
 '''
     result = analyzer.analyze_files({"src/limpio.py": clean})
     assert result["por_severidad"]["critica"] == 0 and "sql_interpolado" not in rules(result)
     assert result["puntuacion"] == 10
+
+
+INLINE_SQL = '''
+LISTAR = "SELECT id, nombre FROM dbo.usuarios WHERE id_empresa = ?"
+
+def run(cursor, uid):
+    cursor.execute("SELECT 1")
+    cursor.execute(LISTAR, ("gio",))
+    cursor.execute("UPDATE dbo.usuarios SET nombre = ? WHERE id = ?", ("x", uid))
+    cursor.execute("DELETE FROM dbo.usuarios WHERE id = ?", (uid,))
+    cursor.execute("EXEC app.usuario_obtener @id = ?", (uid,))
+'''
+
+
+def test_analyzer_requires_stored_procedures_for_data_access():
+    result = analyzer.analyze_files({"src/repo.py": INLINE_SQL})
+    inline = [f for f in result["hallazgos"] if f["regla"] == "sql_en_linea"]
+    assert len(inline) == 3 and all(f["severidad"] == "critica" for f in inline)
+    marked = "# " + analyzer.DATA_ACCESS_EXCEPTION + ": aprovisiona la base\n" + INLINE_SQL
+    assert "sql_en_linea" not in rules(analyzer.analyze_files({"src/admin.py": marked}))
+    assert "sql_en_linea" not in rules(analyzer.analyze_files({"tests/unit/test_repo.py": INLINE_SQL}))
 
 
 def test_analyzer_reports_syntax_errors():
@@ -72,6 +93,11 @@ def test_scaffold_generates_valid_clean_code():
             ast.parse(content)
     review = analyzer.analyze_files({p: c for p, c in files.items() if p.endswith(".py")})
     assert review["por_severidad"]["critica"] == 0
+    repository, sql = files["src/agents/inventario_module/repository.py"], files["sql/inventario.sql"]
+    assert "EXEC app.inventario_insertar @id_producto = ?" in repository and "SELECT" not in repository
+    for action in ("listar", "obtener", "insertar", "actualizar", "eliminar"):
+        assert f"CREATE OR ALTER PROCEDURE app.inventario_{action}" in sql
+    assert "GRANT EXECUTE ON SCHEMA::app TO rol_aplicacion" in sql
     with pytest.raises(scaffold.ScaffoldError):
         scaffold.generate("Inventario-Malo", None, [{"nombre": "x", "tipo": "str"}])
 

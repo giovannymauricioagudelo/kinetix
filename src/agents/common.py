@@ -39,10 +39,10 @@ def repo_path() -> str:
 
 
 def sqlserver_client(timeout_variable: str, default_timeout: int = 30):
-    from src.agents.security_agent.config import load_sqlserver_settings
+    from src.agents.security_agent.config import load_app_sqlserver_settings
     from src.agents.sqlserver import SqlServerClient
 
-    return SqlServerClient(load_sqlserver_settings(), env_int(timeout_variable, default_timeout))
+    return SqlServerClient(load_app_sqlserver_settings(), env_int(timeout_variable, default_timeout))
 
 
 def utcnow() -> datetime:

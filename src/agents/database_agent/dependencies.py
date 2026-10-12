@@ -179,10 +179,10 @@ def build_default_apps_service() -> NexusAppService:
         logger.warning("Nexus usa un registro de aplicaciones en memoria: no se crean bases reales.")
         return NexusAppService(InMemoryAppRegistry(), build_app_servers())
     from src.agents.database_agent.app_registry import SqlServerAppRegistry
-    from src.agents.security_agent.config import load_sqlserver_settings
+    from src.agents.security_agent.config import load_app_sqlserver_settings
     from src.agents.sqlserver import SqlServerClient
 
-    registry = SqlServerAppRegistry(SqlServerClient(load_sqlserver_settings(), _int_env("NEXUS_QUERY_TIMEOUT_SECONDS", 30)))
+    registry = SqlServerAppRegistry(SqlServerClient(load_app_sqlserver_settings(), _int_env("NEXUS_QUERY_TIMEOUT_SECONDS", 30)))
     return NexusAppService(registry, build_app_servers(), copy_batch=_int_env("NEXUS_COPY_BATCH", 1000))
 
 

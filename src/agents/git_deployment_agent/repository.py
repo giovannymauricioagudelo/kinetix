@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, ejecutar
 
 SUCCESS, FAILED, REJECTED = "exitoso", "fallido", "rechazado"
 
@@ -74,8 +74,7 @@ class InMemoryDeploymentRepository(DeploymentRepository):
 
 
 class SqlServerDeploymentRepository(DeploymentRepository):
-    _COLUMNS = ("id_despliegue, entorno, tipo, commit_git, estado, iniciado_por, fecha_inicio, tag, tag_publicado, "
-                "id_origen, notas, fecha_fin, compuerta, workflow, bitacora")
+    """Persistencia sobre los procedimientos del esquema orbit de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -93,35 +92,21 @@ class SqlServerDeploymentRepository(DeploymentRepository):
 
     def save(self, d: Deployment) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.orbit_despliegues ({self._COLUMNS}) VALUES ({', '.join('?' * 15)})",
-                (d.id_despliegue, d.entorno, d.tipo, d.commit_git, d.estado, d.iniciado_por[:200], d.fecha_inicio, d.tag,
-                 d.tag_publicado, d.id_origen, d.notas, d.fecha_fin, dumps(d.compuerta), dumps(d.workflow), dumps(d.bitacora)),
-            )
+            ejecutar(cur, "orbit.despliegue_insertar", id_despliegue=d.id_despliegue, entorno=d.entorno, tipo=d.tipo,
+                     commit_git=d.commit_git, estado=d.estado, iniciado_por=d.iniciado_por[:200], fecha_inicio=d.fecha_inicio,
+                     tag=d.tag, tag_publicado=d.tag_publicado, id_origen=d.id_origen, notas=d.notas, fecha_fin=d.fecha_fin,
+                     compuerta=dumps(d.compuerta), workflow=dumps(d.workflow), bitacora=dumps(d.bitacora))
 
     def get(self, id_despliegue: str) -> Optional[Deployment]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.orbit_despliegues WHERE id_despliegue = ?", (id_despliegue,))
-            row = cur.fetchone()
+            row = ejecutar(cur, "orbit.despliegue_obtener", id_despliegue=id_despliegue).fetchone()
         return self._deployment(row) if row else None
 
     def recent(self, limit: int, entorno: Optional[str] = None, estado: Optional[str] = None) -> List[Deployment]:
-        where, params = [], [limit]
-        if entorno:
-            where.append("entorno = ?")
-            params.append(entorno)
-        if estado:
-            where.append("estado = ?")
-            params.append(estado)
-        sql = f"SELECT TOP (?) {self._COLUMNS} FROM dbo.orbit_despliegues"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
         with self._db.cursor() as cur:
-            cur.execute(sql + " ORDER BY fecha_inicio DESC", tuple(params))
-            return [self._deployment(r) for r in cur.fetchall()]
+            rows = ejecutar(cur, "orbit.despliegue_listar", entorno=entorno or None, estado=estado or None, limite=limit).fetchall()
+        return [self._deployment(r) for r in rows]
 
     def succeeded_with(self, entorno: str, commit: str) -> bool:
         with self._db.cursor() as cur:
-            cur.execute("SELECT TOP 1 1 FROM dbo.orbit_despliegues WHERE entorno = ? AND commit_git = ? AND estado = 'exitoso'",
-                        (entorno, commit))
-            return cur.fetchone() is not None
+            return ejecutar(cur, "orbit.despliegue_exitoso_con", entorno=entorno, commit_git=commit).fetchone() is not None

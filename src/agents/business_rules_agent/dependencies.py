@@ -21,10 +21,10 @@ def build_default_service() -> RulesService:
         logger.warning("Matrix usa repositorio en memoria: las reglas se pierden al reiniciar.")
         return RulesService(InMemoryRulesRepository())
     from src.agents.business_rules_agent.repository import SqlServerRulesRepository
-    from src.agents.security_agent.config import load_sqlserver_settings
+    from src.agents.security_agent.config import load_app_sqlserver_settings
     from src.agents.sqlserver import SqlServerClient
 
-    return RulesService(SqlServerRulesRepository(SqlServerClient(load_sqlserver_settings())))
+    return RulesService(SqlServerRulesRepository(SqlServerClient(load_app_sqlserver_settings())))
 
 
 def get_rules_service() -> RulesService:

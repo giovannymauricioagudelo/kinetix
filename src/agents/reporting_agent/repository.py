@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 
 @dataclass(frozen=True)
@@ -170,9 +170,7 @@ class InMemoryInsightRepository(InsightRepository):
 
 
 class SqlServerInsightRepository(InsightRepository):
-    _REPORT = "id_reporte, id_empresa, tipo, nombre, parametros, filas, origen, generado_por, fecha, id_programacion"
-    _SCHEDULE = ("id_programacion, id_empresa, nombre, tipo, parametros, frecuencia, hora_utc, activa, proxima_ejecucion, "
-                 "id_usuario, nombre_usuario, fecha_creacion, ultima_ejecucion, ultimo_estado, ultimo_error")
+    """Persistencia sobre los procedimientos del esquema insight de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -199,102 +197,67 @@ class SqlServerInsightRepository(InsightRepository):
 
     def save_report(self, r: SavedReport) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.insight_reportes ({self._REPORT}, resultado) VALUES ({', '.join('?' * 11)})",
-                (r.id_reporte, r.id_empresa, r.tipo, r.nombre[:200], dumps(r.parametros), r.filas, r.origen,
-                 r.generado_por[:200], r.fecha, r.id_programacion, dumps(r.resultado)),
-            )
+            ejecutar(cur, "insight.reporte_insertar", id_reporte=r.id_reporte, id_empresa=r.id_empresa, tipo=r.tipo,
+                     nombre=r.nombre[:200], parametros=dumps(r.parametros), filas=r.filas, origen=r.origen,
+                     generado_por=r.generado_por[:200], fecha=r.fecha, id_programacion=r.id_programacion,
+                     resultado=dumps(r.resultado))
 
     def get_report(self, id_reporte: str, id_empresa: str) -> Optional[SavedReport]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._REPORT}, resultado FROM dbo.insight_reportes WHERE id_reporte = ? AND id_empresa = ?",
-                        (id_reporte, id_empresa))
-            row = cur.fetchone()
+            row = ejecutar(cur, "insight.reporte_obtener", id_reporte=id_reporte, id_empresa=id_empresa).fetchone()
         return self._report(row, row[10]) if row else None
 
     def list_reports(self, id_empresa: str, tipo: Optional[str], limit: int) -> List[SavedReport]:
-        sql = f"SELECT TOP (?) {self._REPORT} FROM dbo.insight_reportes WHERE id_empresa = ?"
-        params: List[Any] = [limit, id_empresa]
-        if tipo:
-            sql += " AND tipo = ?"
-            params.append(tipo)
         with self._db.cursor() as cur:
-            cur.execute(sql + " ORDER BY fecha DESC", tuple(params))
-            return [self._report(r) for r in cur.fetchall()]
+            rows = ejecutar(cur, "insight.reporte_listar", id_empresa=id_empresa, tipo=tipo or None, limite=limit).fetchall()
+        return [self._report(r) for r in rows]
 
     def delete_report(self, id_reporte: str, id_empresa: str) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.insight_reportes WHERE id_reporte = ? AND id_empresa = ?", (id_reporte, id_empresa))
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "insight.reporte_eliminar", id_reporte=id_reporte, id_empresa=id_empresa)) == 1
 
     def purge_reports(self, before: datetime) -> int:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.insight_reportes WHERE fecha < ?", (before,))
-            return cur.rowcount
+            return afectadas(ejecutar(cur, "insight.reporte_purgar", antes=before))
 
     def create_schedule(self, s: Schedule) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.insight_programaciones ({self._SCHEDULE}) VALUES ({', '.join('?' * 15)})",
-                (s.id_programacion, s.id_empresa, s.nombre[:200], s.tipo, dumps(s.parametros), s.frecuencia, s.hora_utc,
-                 s.activa, s.proxima_ejecucion, s.id_usuario, s.nombre_usuario[:200], s.fecha_creacion, s.ultima_ejecucion,
-                 s.ultimo_estado, s.ultimo_error),
-            )
+            ejecutar(cur, "insight.programacion_insertar", id_programacion=s.id_programacion, id_empresa=s.id_empresa,
+                     nombre=s.nombre[:200], tipo=s.tipo, parametros=dumps(s.parametros), frecuencia=s.frecuencia,
+                     hora_utc=s.hora_utc, activa=s.activa, proxima_ejecucion=s.proxima_ejecucion, id_usuario=s.id_usuario,
+                     nombre_usuario=s.nombre_usuario[:200], fecha_creacion=s.fecha_creacion, ultima_ejecucion=s.ultima_ejecucion,
+                     ultimo_estado=s.ultimo_estado, ultimo_error=s.ultimo_error)
 
     def get_schedule(self, id_programacion: str, id_empresa: Optional[str]) -> Optional[Schedule]:
-        sql = f"SELECT {self._SCHEDULE} FROM dbo.insight_programaciones WHERE id_programacion = ?"
-        params: List[Any] = [id_programacion]
-        if id_empresa is not None:
-            sql += " AND id_empresa = ?"
-            params.append(id_empresa)
         with self._db.cursor() as cur:
-            cur.execute(sql, tuple(params))
-            row = cur.fetchone()
+            row = ejecutar(cur, "insight.programacion_obtener", id_programacion=id_programacion, id_empresa=id_empresa).fetchone()
         return self._schedule(row) if row else None
 
     def list_schedules(self, id_empresa: str) -> List[Schedule]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._SCHEDULE} FROM dbo.insight_programaciones WHERE id_empresa = ? ORDER BY fecha_creacion",
-                        (id_empresa,))
-            return [self._schedule(r) for r in cur.fetchall()]
+            return [self._schedule(r) for r in ejecutar(cur, "insight.programacion_listar", id_empresa=id_empresa).fetchall()]
 
     def update_schedule(self, s: Schedule) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.insight_programaciones SET nombre = ?, parametros = ?, frecuencia = ?, hora_utc = ?, activa = ?, "
-                "proxima_ejecucion = ? WHERE id_programacion = ? AND id_empresa = ?",
-                (s.nombre[:200], dumps(s.parametros), s.frecuencia, s.hora_utc, s.activa, s.proxima_ejecucion,
-                 s.id_programacion, s.id_empresa),
-            )
+            ejecutar(cur, "insight.programacion_actualizar", id_programacion=s.id_programacion, id_empresa=s.id_empresa,
+                     nombre=s.nombre[:200], parametros=dumps(s.parametros), frecuencia=s.frecuencia, hora_utc=s.hora_utc,
+                     activa=s.activa, proxima_ejecucion=s.proxima_ejecucion)
 
     def delete_schedule(self, id_programacion: str, id_empresa: str) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.insight_programaciones WHERE id_programacion = ? AND id_empresa = ?",
-                        (id_programacion, id_empresa))
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "insight.programacion_eliminar", id_programacion=id_programacion,
+                                      id_empresa=id_empresa)) == 1
 
     def due_schedules(self, now: datetime, limit: int) -> List[Schedule]:
         with self._db.cursor() as cur:
-            cur.execute(
-                f"SELECT TOP (?) {self._SCHEDULE} FROM dbo.insight_programaciones "
-                "WHERE activa = 1 AND proxima_ejecucion <= ? ORDER BY proxima_ejecucion",
-                (limit, now),
-            )
-            return [self._schedule(r) for r in cur.fetchall()]
+            return [self._schedule(r) for r in ejecutar(cur, "insight.programacion_vencidas", ahora=now, limite=limit).fetchall()]
 
     def claim(self, id_programacion: str, expected_next: datetime, new_next: datetime) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.insight_programaciones SET proxima_ejecucion = ? "
-                "WHERE id_programacion = ? AND proxima_ejecucion = ? AND activa = 1",
-                (new_next, id_programacion, expected_next),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "insight.programacion_reclamar", id_programacion=id_programacion,
+                                      proxima_esperada=expected_next, proxima_nueva=new_next)) == 1
 
     def record_run(self, id_programacion: str, at: datetime, estado: str, error: Optional[str]) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.insight_programaciones SET ultima_ejecucion = ?, ultimo_estado = ?, ultimo_error = ? "
-                "WHERE id_programacion = ?",
-                (at, estado, (error or "")[:1000] or None, id_programacion),
-            )
+            ejecutar(cur, "insight.programacion_registrar_ejecucion", id_programacion=id_programacion, fecha=at, estado=estado,
+                     error=(error or "")[:1000] or None)

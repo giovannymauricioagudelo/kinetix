@@ -1,5 +1,8 @@
 """Acceso de Nexus al catálogo de una base: contrato común, implementación SQL Server y doble en memoria.
-PostgreSQL, Firebird y MongoDB viven en postgres_catalog, firebird_catalog y mongo_catalog."""
+PostgreSQL, Firebird y MongoDB viven en postgres_catalog, firebird_catalog y mongo_catalog.
+
+acceso-datos: excepcion-administracion (herramienta DBA de Nexus sobre bases destino, con credencial de administrador)
+"""
 
 from __future__ import annotations
 

@@ -1,6 +1,8 @@
 """
 Aplica un script .sql (lotes separados por GO) en una sola transacción, con las credenciales de .env.
 Uso: venv\\Scripts\\python.exe scripts\\apply_sql_migration.py NEXUS_MATRIX_SCHEMA.sql
+
+acceso-datos: excepcion-administracion (migraciones DDL con la credencial de administrador)
 """
 
 from __future__ import annotations

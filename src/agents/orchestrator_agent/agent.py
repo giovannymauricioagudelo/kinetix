@@ -478,14 +478,14 @@ DEPENDENCIES: Dict[str, Tuple[AgentProfile, ...]] = {
 }
 
 DEFAULT_ACTIONS: Dict[str, str] = {
-    NEXUS.codename: "Diseñar o ajustar el modelo de datos, índices y migraciones.",
+    NEXUS.codename: "Diseñar o ajustar el modelo de datos, índices, migraciones y los procedimientos almacenados de acceso.",
     MATRIX.codename: "Traducir los requisitos en reglas de negocio validadas.",
     SYNAPSE.codename: "Definir contratos de API e integraciones externas.",
     INSIGHT.codename: "Diseñar reportes, KPIs y dashboards.",
     AURORA.codename: "Diseñar flujos de usuario, pantallas y componentes accesibles.",
     GENESIS.codename: "Diseñar los componentes de IA requeridos.",
-    VECTOR.codename: "Implementar los cambios siguiendo los diseños aprobados.",
-    PRISM.codename: "Validar con pruebas unitarias, de integración y de seguridad.",
+    VECTOR.codename: "Implementar los cambios siguiendo los diseños aprobados; acceso a datos solo por procedimientos almacenados.",
+    PRISM.codename: "Validar con pruebas unitarias, de integración y de seguridad; bloquear SQL de datos en línea.",
     ORBIT.codename: "Desplegar a producción con plan de reversión.",
     SENTINEL.codename: "Definir autenticación, roles, permisos y auditoría; exigir MFA a los roles sensibles.",
     ARGUS.codename: "Configurar métricas, sondas de salud y alertas; verificar el SLA después del despliegue.",
@@ -495,7 +495,8 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
     RequestType.NEW_APP: {
         NEXUS.codename: ("Registrar la aplicación en kinetix con {modelo} en {motor}, crear su base de datos independiente "
                          "y desplegar tablas y migraciones según ese modelo. Las tablas quedan en formato portable para "
-                         "poder cambiar de motor si la aplicación escala."),
+                         "poder cambiar de motor si la aplicación escala. Cada tabla trae sus procedimientos almacenados "
+                         "y la aplicación se conecta con un rol de solo EXECUTE."),
         AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación, tablero, listados con "
                           "filtros y exportación, formularios por secciones, detalle y configuración."),
         VECTOR.codename: ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente, e "
@@ -569,8 +570,8 @@ SprintSpec = Tuple[str, str, str, str, Tuple[SprintTask, ...]]
 CAPABILITY_SPRINTS: Dict[str, SprintSpec] = {
     "datos": ("datos", "Modelo de datos completo", "Completar tablas, índices y migraciones de todos los módulos.",
               "Migraciones desplegadas y repositorios probados.", (
-                  (NEXUS, "Registrar las tablas restantes como migraciones portables y desplegarlas."),
-                  (VECTOR, "Implementar repositorios y servicios sobre las tablas nuevas."),
+                  (NEXUS, "Registrar las tablas restantes como migraciones portables y desplegarlas con sus procedimientos almacenados."),
+                  (VECTOR, "Implementar repositorios (solo procedimientos almacenados) y servicios sobre las tablas nuevas."),
                   (PRISM, "Pruebas de integración de la capa de datos."))),
     "reglas": ("reglas", "Reglas de negocio", "Llevar las reglas de negocio a validaciones ejecutables.",
                "Reglas validadas e implementadas con sus pruebas.", (
@@ -645,7 +646,7 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
                 (NEXUS, nexus_action),
                 (SENTINEL, DEFAULT_ACTIONS[SENTINEL.codename]),
                 (VECTOR, "Crear en el repositorio de {aplicacion} el esqueleto del proyecto (clean architecture) con "
-                         "autenticación integrada y CI."),
+                         "autenticación integrada, repositorios que solo llaman procedimientos almacenados y CI."),
                 (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):

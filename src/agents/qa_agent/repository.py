@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 QUEUED, RUNNING = "en_cola", "ejecutando"
 FINISHED = ("aprobada", "fallida", "error")
@@ -104,8 +104,7 @@ class InMemoryTestRunRepository(TestRunRepository):
 
 
 class SqlServerTestRunRepository(TestRunRepository):
-    _COLUMNS = ("id_ejecucion, objetivos, filtro, con_cobertura, suite_completa, estado, commit_git, arbol_limpio, "
-                "iniciada_por, fecha_inicio, total, pasadas, fallidas, omitidas, errores, cobertura, duracion_s, fecha_fin, detalle")
+    """Persistencia sobre los procedimientos del esquema prism de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -114,10 +113,10 @@ class SqlServerTestRunRepository(TestRunRepository):
         self._db.ping()
 
     @staticmethod
-    def _params(run: TestRun) -> tuple:
-        return (run.id_ejecucion, dumps(run.objetivos), run.filtro, run.con_cobertura, run.suite_completa, run.estado,
-                run.commit_git, run.arbol_limpio, run.iniciada_por[:200], run.fecha_inicio, run.total, run.pasadas,
-                run.fallidas, run.omitidas, run.errores, run.cobertura, run.duracion_s, run.fecha_fin, dumps(run.detalle))
+    def _results(run: TestRun) -> Dict[str, Any]:
+        return dict(id_ejecucion=run.id_ejecucion, estado=run.estado, total=run.total, pasadas=run.pasadas,
+                    fallidas=run.fallidas, omitidas=run.omitidas, errores=run.errores, cobertura=run.cobertura,
+                    duracion_s=run.duracion_s, fecha_fin=run.fecha_fin, detalle=dumps(run.detalle))
 
     @staticmethod
     def _run(row) -> TestRun:
@@ -132,49 +131,28 @@ class SqlServerTestRunRepository(TestRunRepository):
 
     def create(self, run: TestRun) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(f"INSERT INTO dbo.prism_ejecuciones ({self._COLUMNS}) VALUES ({', '.join('?' * 19)})", self._params(run))
+            ejecutar(cur, "prism.ejecucion_insertar", **self._results(run), objetivos=dumps(run.objetivos), filtro=run.filtro,
+                     con_cobertura=run.con_cobertura, suite_completa=run.suite_completa, commit_git=run.commit_git,
+                     arbol_limpio=run.arbol_limpio, iniciada_por=run.iniciada_por[:200], fecha_inicio=run.fecha_inicio)
 
     def update(self, run: TestRun) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.prism_ejecuciones SET estado = ?, total = ?, pasadas = ?, fallidas = ?, omitidas = ?, errores = ?, "
-                "cobertura = ?, duracion_s = ?, fecha_fin = ?, detalle = ? WHERE id_ejecucion = ?",
-                (run.estado, run.total, run.pasadas, run.fallidas, run.omitidas, run.errores, run.cobertura,
-                 run.duracion_s, run.fecha_fin, dumps(run.detalle), run.id_ejecucion),
-            )
+            ejecutar(cur, "prism.ejecucion_actualizar", **self._results(run))
 
     def get(self, id_ejecucion: str) -> Optional[TestRun]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.prism_ejecuciones WHERE id_ejecucion = ?", (id_ejecucion,))
-            row = cur.fetchone()
+            row = ejecutar(cur, "prism.ejecucion_obtener", id_ejecucion=id_ejecucion).fetchone()
         return self._run(row) if row else None
 
     def recent(self, limit: int, estado: Optional[str] = None) -> List[TestRun]:
-        sql = f"SELECT TOP (?) {self._COLUMNS} FROM dbo.prism_ejecuciones"
-        params: List[Any] = [limit]
-        if estado:
-            sql += " WHERE estado = ?"
-            params.append(estado)
         with self._db.cursor() as cur:
-            cur.execute(sql + " ORDER BY fecha_inicio DESC", tuple(params))
-            return [self._run(r) for r in cur.fetchall()]
+            return [self._run(r) for r in ejecutar(cur, "prism.ejecucion_listar", estado=estado or None, limite=limit).fetchall()]
 
     def latest_full_run(self, commit: str) -> Optional[TestRun]:
         with self._db.cursor() as cur:
-            cur.execute(
-                f"SELECT TOP 1 {self._COLUMNS} FROM dbo.prism_ejecuciones WHERE commit_git = ? AND suite_completa = 1 "
-                "AND con_cobertura = 1 AND estado IN ('aprobada', 'fallida', 'error') ORDER BY fecha_inicio DESC",
-                (commit,),
-            )
-            row = cur.fetchone()
+            row = ejecutar(cur, "prism.ejecucion_completa_ultima", commit_git=commit).fetchone()
         return self._run(row) if row else None
 
     def abandon_unfinished(self, now: datetime) -> int:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.prism_ejecuciones SET estado = 'error', fecha_fin = ?, "
-                "detalle = JSON_MODIFY(COALESCE(detalle, '{}'), '$.mensaje', N'Ejecución interrumpida por reinicio') "
-                "WHERE estado IN ('en_cola', 'ejecutando')",
-                (now,),
-            )
-            return cur.rowcount
+            return afectadas(ejecutar(cur, "prism.ejecucion_abandonar", ahora=now))

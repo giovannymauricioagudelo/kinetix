@@ -27,6 +27,10 @@ _BRANCHES = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.IfExp, ast.ExceptHand
 _BLOCKS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith)
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "request"}
 _SQL_HINT = re.compile(r"(?i)\b(select|insert|update|delete|exec|merge)\b")
+_DATA_SQL = re.compile(r"(?is)(?<!ON\s)(?<!FOR\s)(?<!AFTER\s)(?<!OF\s)(?<!,\s)\b(INSERT\s+INTO|UPDATE\s+[\w.\[\]]+\s+SET"
+                       r"|DELETE\s+(FROM\s+)?[\w.\[\]]+|MERGE\s+(INTO\s+)?[\w.\[\]]+|SELECT\b.*?\bFROM\b)")
+# Archivos fuera del código de la aplicación que operan como administrador (ver acceso-datos-procedimientos.mdc).
+DATA_ACCESS_EXCEPTION = "acceso-datos: excepcion-administracion"
 
 
 @dataclass(frozen=True)
@@ -144,9 +148,11 @@ def _nesting(node: ast.AST, depth: int = 0) -> int:
 
 
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, path: str, is_test: bool) -> None:
+    def __init__(self, path: str, is_test: bool, admin_exception: bool = False, constants: Optional[Dict[str, str]] = None) -> None:
         self.path = path
         self.is_test = is_test
+        self.admin_exception = admin_exception
+        self.constants = constants or {}
         self.findings: List[Finding] = []
         self.functions: List[FunctionMetrics] = []
         self.classes = 0
@@ -234,6 +240,12 @@ class _Visitor(ast.NodeVisitor):
         query = node.args[0]
         if _is_dynamic_string(query) and _SQL_HINT.search(_string_text(query) or "select"):
             self.add(node, "sql_interpolado", "seguridad", "alta", "SQL construido con interpolación de texto; usa parámetros (OWASP A03)")
+        if self.is_test or self.admin_exception:
+            return
+        text = self.constants.get(query.id, "") if isinstance(query, ast.Name) else _string_text(query)
+        if _DATA_SQL.search(text):
+            self.add(node, "sql_en_linea", "seguridad", "critica",
+                     "Acceso a datos con SQL en línea: llama un procedimiento almacenado (EXEC app.…) con parámetros")
 
     def visit_Call(self, node: ast.Call) -> None:
         name = _dotted(node.func)
@@ -297,7 +309,13 @@ def analyze_source(path: str, source: str) -> Tuple[List[Finding], List[Function
     except SyntaxError as e:
         finding = Finding(path, e.lineno or 0, "error_sintaxis", "fiabilidad", "critica", f"Error de sintaxis: {e.msg}")
         return [finding], [], {"lineas": _code_lines(source), "clases": 0}, e.msg
-    visitor = _Visitor(path, is_test)
+    constants = {
+        target.id: stmt.value.value
+        for stmt in tree.body if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
+        for target in stmt.targets if isinstance(target, ast.Name)
+    }
+    visitor = _Visitor(path, is_test, DATA_ACCESS_EXCEPTION in source, constants)
     visitor.visit(tree)
     for number, line in enumerate(source.splitlines(), start=1):
         if _TODO.search(line):

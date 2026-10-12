@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 
 @dataclass(frozen=True)
@@ -107,8 +107,7 @@ class InMemoryDesignRepository(DesignRepository):
 
 
 class SqlServerDesignRepository(DesignRepository):
-    _COLUMNS = ("id_sistema, nombre, id_empresa, nivel_wcag, tokens, version, estado, creado_por, "
-                "fecha_creacion, fecha_modificacion")
+    """Persistencia sobre los procedimientos del esquema aurora de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -126,71 +125,49 @@ class SqlServerDesignRepository(DesignRepository):
         )
 
     def create(self, system: DesignSystem) -> bool:
+        s = system
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.aurora_sistemas ({self._COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.aurora_sistemas WITH (UPDLOCK, HOLDLOCK) WHERE id_empresa = ? AND nombre = ?)",
-                (system.id_sistema, system.nombre, system.id_empresa, system.nivel_wcag, dumps(system.tokens), system.version,
-                 system.estado, system.creado_por, system.fecha_creacion, system.fecha_modificacion,
-                 system.id_empresa, system.nombre),
-            )
-            if cur.rowcount != 1:
+            created = afectadas(ejecutar(
+                cur, "aurora.sistema_insertar", id_sistema=s.id_sistema, nombre=s.nombre, id_empresa=s.id_empresa,
+                nivel_wcag=s.nivel_wcag, tokens=dumps(s.tokens), version=s.version, estado=s.estado, creado_por=s.creado_por,
+                fecha_creacion=s.fecha_creacion, fecha_modificacion=s.fecha_modificacion))
+            if created != 1:
                 return False
-            for component in system.componentes:
-                self._insert_component(cur, system.id_sistema, component, system.fecha_creacion)
+            for component in s.componentes:
+                self._insert_component(cur, s.id_sistema, component, s.fecha_creacion)
             return True
 
     @staticmethod
     def _insert_component(cur, id_sistema: str, component: Dict[str, Any], now: Optional[datetime]) -> None:
-        cur.execute(
-            "INSERT INTO dbo.aurora_componentes (id_sistema, nombre, tipo, especificacion, fecha_modificacion) VALUES (?, ?, ?, ?, ?)",
-            (id_sistema, component["nombre"], component["tipo"], dumps(component), now),
-        )
+        ejecutar(cur, "aurora.componente_insertar", id_sistema=id_sistema, nombre=component["nombre"], tipo=component["tipo"],
+                 especificacion=dumps(component), fecha_modificacion=now)
 
     def get(self, id_sistema: str, id_empresa: str) -> Optional[DesignSystem]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.aurora_sistemas WHERE id_sistema = ? AND id_empresa = ?",
-                        (id_sistema, id_empresa))
-            row = cur.fetchone()
+            row = ejecutar(cur, "aurora.sistema_obtener", id_sistema=id_sistema, id_empresa=id_empresa).fetchone()
             if row is None:
                 return None
-            cur.execute("SELECT especificacion FROM dbo.aurora_componentes WHERE id_sistema = ? ORDER BY nombre", (id_sistema,))
+            cur.nextset()
             components = [loads(r[0], {}) for r in cur.fetchall()]
         return self._system(row, [c for c in components if c])
 
     def list(self, id_empresa: str) -> List[DesignSystem]:
         with self._db.cursor() as cur:
-            cur.execute(
-                f"SELECT {self._COLUMNS}, (SELECT COUNT(*) FROM dbo.aurora_componentes c WHERE c.id_sistema = s.id_sistema) "
-                "FROM dbo.aurora_sistemas s WHERE id_empresa = ? ORDER BY fecha_modificacion DESC",
-                (id_empresa,),
-            )
-            rows = cur.fetchall()
+            rows = ejecutar(cur, "aurora.sistema_listar", id_empresa=id_empresa).fetchall()
         return [self._system(r, total=r[10] or 0) for r in rows]
 
     def update_tokens(self, id_sistema, id_empresa, tokens, expected_version, nivel_wcag, now) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.aurora_sistemas SET tokens = ?, version = version + 1, nivel_wcag = ?, fecha_modificacion = ? "
-                "WHERE id_sistema = ? AND id_empresa = ? AND version = ?",
-                (dumps(tokens), nivel_wcag, now, id_sistema, id_empresa, expected_version),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "aurora.sistema_actualizar_tokens", id_sistema=id_sistema, id_empresa=id_empresa,
+                                      tokens=dumps(tokens), nivel_wcag=nivel_wcag, ahora=now,
+                                      version_esperada=expected_version)) == 1
 
     def upsert_component(self, id_sistema: str, component: Dict[str, Any], now: datetime) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.aurora_componentes WITH (UPDLOCK, HOLDLOCK) SET tipo = ?, especificacion = ?, fecha_modificacion = ? "
-                "WHERE id_sistema = ? AND nombre = ?",
-                (component["tipo"], dumps(component), now, id_sistema, component["nombre"]),
-            )
-            created = cur.rowcount == 0
-            if created:
-                self._insert_component(cur, id_sistema, component, now)
-            cur.execute("UPDATE dbo.aurora_sistemas SET fecha_modificacion = ? WHERE id_sistema = ?", (now, id_sistema))
-            return created
+            row = ejecutar(cur, "aurora.componente_guardar", id_sistema=id_sistema, nombre=component["nombre"],
+                           tipo=component["tipo"], especificacion=dumps(component), ahora=now).fetchone()
+            return bool(row[0])
 
     def delete_component(self, id_sistema: str, nombre: str) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.aurora_componentes WHERE id_sistema = ? AND nombre = ?", (id_sistema, nombre))
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "aurora.componente_eliminar", id_sistema=id_sistema, nombre=nombre)) == 1

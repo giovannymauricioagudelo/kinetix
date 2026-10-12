@@ -385,7 +385,7 @@ class NexusAppService:
         if m.definicion:
             return render(json.loads(m.definicion), motor)
         if m.tipo == "base":
-            return render(base_definition(app.seguridad_por_fila), motor)
+            return render(base_definition(app.seguridad_por_fila, version=1), motor)
         written_for = m.motor or "sqlserver"
         if motor == written_for:
             return m.script

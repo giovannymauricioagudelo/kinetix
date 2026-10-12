@@ -1,4 +1,7 @@
-"""Aprovisionador de Nexus: crea la base independiente de cada aplicación y le aplica las migraciones registradas."""
+"""Aprovisionador de Nexus: crea la base independiente de cada aplicación y le aplica las migraciones registradas.
+
+acceso-datos: excepcion-administracion (despliegue de migraciones de Nexus, con credencial de administrador)
+"""
 
 from __future__ import annotations
 

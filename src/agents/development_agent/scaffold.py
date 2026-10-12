@@ -132,37 +132,36 @@ class InMemory${Entity}Repository(${Entity}Repository):
 
 
 class SqlServer${Entity}Repository(${Entity}Repository):
-    _COLUMNS = "$sql_columns"
+    """Solo procedimientos almacenados del esquema app (sql/$table.sql); nada de SQL en línea."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
 
     def list(self, id_empresa: str, limit: int) -> List[$Entity]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT TOP (?) {self._COLUMNS} FROM dbo.$table WHERE id_empresa = ? ORDER BY fecha_creacion DESC",
-                        (limit, id_empresa))
+            cur.execute("EXEC app.${table}_listar @id_empresa = ?, @limite = ?", (id_empresa, limit))
             return [$Entity(*row) for row in cur.fetchall()]
 
     def get(self, id_empresa: str, item_id: str) -> Optional[$Entity]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.$table WHERE id_empresa = ? AND $id_field = ?", (id_empresa, item_id))
+            cur.execute("EXEC app.${table}_obtener @id_empresa = ?, @$id_field = ?", (id_empresa, item_id))
             row = cur.fetchone()
         return $Entity(*row) if row else None
 
     def create(self, item: $Entity) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(f"INSERT INTO dbo.$table ({self._COLUMNS}) VALUES ($placeholders)", astuple(item))
+            cur.execute("EXEC app.${table}_insertar $insert_params", astuple(item))
 
     def update(self, item: $Entity) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("UPDATE dbo.$table SET $set_clause WHERE id_empresa = ? AND $id_field = ?",
-                        ($update_values, item.id_empresa, item.$id_field))
-            return cur.rowcount == 1
+            cur.execute("EXEC app.${table}_actualizar @id_empresa = ?, @$id_field = ?, $update_params",
+                        (item.id_empresa, item.$id_field, $update_values))
+            return cur.fetchone()[0] == 1
 
     def delete(self, id_empresa: str, item_id: str) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.$table WHERE id_empresa = ? AND $id_field = ?", (id_empresa, item_id))
-            return cur.rowcount == 1
+            cur.execute("EXEC app.${table}_eliminar @id_empresa = ?, @$id_field = ?", (id_empresa, item_id))
+            return cur.fetchone()[0] == 1
 ''')
 
 SERVICE = Template('''"""Casos de uso de $Entity: validación y CRUD por empresa."""
@@ -438,6 +437,59 @@ $sql_fields
 END
 GO
 
+--| Acceso a datos solo por procedimientos del esquema app; la aplicación solo tiene EXECUTE |
+IF SCHEMA_ID(N'app') IS NULL EXEC(N'CREATE SCHEMA app');
+GO
+
+CREATE OR ALTER PROCEDURE app.${table}_listar @id_empresa NVARCHAR(100), @limite INT = 50
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT TOP (CASE WHEN @limite BETWEEN 1 AND 500 THEN @limite ELSE 50 END) $sql_columns
+    FROM dbo.$table WHERE id_empresa = @id_empresa ORDER BY fecha_creacion DESC;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE app.${table}_obtener @id_empresa NVARCHAR(100), @$id_field NVARCHAR(40)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT $sql_columns FROM dbo.$table WHERE id_empresa = @id_empresa AND $id_field = @$id_field;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE app.${table}_insertar
+$proc_params
+AS
+BEGIN
+    SET NOCOUNT ON;
+    INSERT INTO dbo.$table ($sql_columns) VALUES ($proc_values);
+END;
+GO
+
+CREATE OR ALTER PROCEDURE app.${table}_actualizar
+    @id_empresa NVARCHAR(100), @$id_field NVARCHAR(40),
+$proc_field_params
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE dbo.$table SET $proc_set WHERE id_empresa = @id_empresa AND $id_field = @$id_field;
+    SELECT @@ROWCOUNT AS filas;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE app.${table}_eliminar @id_empresa NVARCHAR(100), @$id_field NVARCHAR(40)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DELETE FROM dbo.$table WHERE id_empresa = @id_empresa AND $id_field = @$id_field;
+    SELECT @@ROWCOUNT AS filas;
+END;
+GO
+
+IF DATABASE_PRINCIPAL_ID(N'rol_aplicacion') IS NOT NULL GRANT EXECUTE ON SCHEMA::app TO rol_aplicacion;
+GO
+
 --| Permisos $module:ver y $module:gestionar para rol_admin |
 DECLARE @con_nombre BIT = CASE WHEN COL_LENGTH('dbo.permisos', 'nombre_permiso') IS NULL THEN 0 ELSE 1 END;
 IF NOT EXISTS (SELECT 1 FROM dbo.permisos WHERE id = 'perm_${module}_ver')
@@ -472,6 +524,8 @@ def generate(modulo: str, entidad: str, campos: List[Dict[str, object]]) -> Dict
     package = f"{module}_module"
     id_field = f"id_{_snake(entity)}"
     columns = [id_field, "id_empresa", *(f.nombre for f in fields), "creado_por", "fecha_creacion"]
+    sql_types = {id_field: "NVARCHAR(40)", "id_empresa": "NVARCHAR(100)", "creado_por": "NVARCHAR(200)",
+                 "fecha_creacion": "DATETIME2", **{f.nombre: FIELD_TYPES[f.tipo][1] for f in fields}}
 
     def py_type(f: FieldSpec) -> str:
         return FIELD_TYPES[f.tipo][0]
@@ -498,9 +552,13 @@ def generate(modulo: str, entidad: str, campos: List[Dict[str, object]]) -> Dict
         "first_field": fields[0].nombre,
         "dataclass_fields": dataclass_fields,
         "sql_columns": ", ".join(columns),
-        "placeholders": ", ".join("?" for _ in columns),
-        "set_clause": ", ".join(f"{f.nombre} = ?" for f in fields),
+        "insert_params": ", ".join(f"@{c} = ?" for c in columns),
+        "update_params": ", ".join(f"@{f.nombre} = ?" for f in fields),
         "update_values": ", ".join(f"item.{f.nombre}" for f in fields),
+        "proc_params": ",\n".join(f"    @{c} {sql_types[c]}" for c in columns),
+        "proc_values": ", ".join(f"@{c}" for c in columns),
+        "proc_field_params": ",\n".join(f"    @{f.nombre} {FIELD_TYPES[f.tipo][1]}" for f in fields),
+        "proc_set": ", ".join(f"{f.nombre} = @{f.nombre}" for f in fields),
         "fields_spec": "\n".join(f'    "{f.nombre}": ({py_type(f)}, {f.requerido}),' for f in fields),
         "body_fields": body_fields,
         "patch_fields": "\n".join(f"    {f.nombre}: Optional[{py_type(f)}] = None" for f in fields),

@@ -1,6 +1,9 @@
 """Catálogo de Nexus sobre Firebird 3+ (firebird-driver, requiere la librería cliente fbclient):
 tablas del sistema RDB$, procedimientos, DDL en formato isql y respaldos con gbak.
-Firebird no tiene esquemas: el esquema recibido se ignora."""
+Firebird no tiene esquemas: el esquema recibido se ignora.
+
+acceso-datos: excepcion-administracion (herramienta DBA de Nexus sobre bases destino, con credencial de administrador)
+"""
 
 from __future__ import annotations
 

@@ -1,0 +1,39 @@
+---
+description: Acceso a datos solo por procedimientos almacenados en la fábrica Kinetix y en todas sus aplicaciones
+alwaysApply: true
+---
+
+# Acceso a datos solo por procedimientos almacenados
+
+Regla obligatoria para **kinetix-studio** y para **toda aplicación generada por la fábrica** (Llavia y las siguientes). Toda consulta, inserción, actualización y borrado pasa por un procedimiento almacenado; el código nunca envía `SELECT`, `INSERT`, `UPDATE`, `DELETE` ni `MERGE` a la base.
+
+## Código (Vector)
+
+- Los repositorios solo ejecutan `EXEC esquema.procedimiento @param = ?` con parámetros; nada de SQL armado con f-strings ni concatenación.
+- Un procedimiento por operación de negocio (`app.inmueble_obtener`, `app.auditoria_anexar`), con `SET NOCOUNT ON` y columnas explícitas (nunca `SELECT *`).
+- Se permiten las llamadas de sesión del motor: `sp_set_session_context` (seguridad por fila) y `sp_getapplock` dentro de un procedimiento.
+
+## Base de datos (Nexus y Sentinel)
+
+- Procedimientos en el esquema `app` (aplicaciones) o en el esquema del agente (fábrica: `sentinel`, `nexus`, `matrix`… en `KINETIX_PROCEDIMIENTOS.sql`); los esquemas son de `dbo` para que el encadenamiento de propiedad llegue a las tablas, que no se tocan desde fuera.
+- El usuario de la aplicación pertenece a un rol con **solo `EXECUTE`** sobre los esquemas de procedimientos (`llavia_app_rol`, `kinetix_app_rol`): sin `SELECT/INSERT/UPDATE/DELETE` sobre tablas. Así una inyección no puede leer ni modificar tablas. La credencial de administrador es otra y solo la usan las excepciones de abajo.
+- Sin SQL dinámico (`EXEC(`, `sp_executesql`) ni `EXECUTE AS` dentro de los procedimientos: rompen el encadenamiento de propiedad y la seguridad por fila.
+- Con seguridad por fila (aplicaciones de Nexus) los procedimientos no reciben `id_empresa` para filtrar: lo toman de `SESSION_CONTEXT('id_empresa')`. Sin seguridad por fila (base kinetix) `id_empresa` es un parámetro obligatorio y todo procedimiento de datos de empresa filtra por él.
+- Los procedimientos que modifican devuelven `SELECT @@ROWCOUNT AS afectadas` cuando el código necesita saberlo (con `SET NOCOUNT ON` el contador del driver no sirve).
+- Lo que no se borra (auditoría, evidencia, historia) no tiene procedimiento de borrado; los triggers de inalterabilidad se mantienen.
+- Nexus genera los procedimientos base de cada tabla nueva (SQL Server) y el rol de solo `EXECUTE`; los de negocio van en el SQL complementario (`database/nexus/grupo_NN_procedimientos.sql`).
+
+## Excepciones documentadas
+
+Solo con credencial de administrador y **fuera del código de la aplicación**:
+
+- Scripts de administración: siembras de demo, aprovisionamiento de logins y verificación de controles (`scripts/`).
+- Herramientas de administración de Nexus que operan como DBA sobre bases destino: catálogo e introspección, despliegue de migraciones, respaldos y copia entre motores.
+- Migraciones DDL.
+
+Cada archivo exceptuado lo declara en su docstring con `acceso-datos: excepcion-administracion`; el analizador de Vector no lo marca.
+
+## Verificación (Prism)
+
+- Prueba en CI que falla si hay SQL de datos en línea en `src/` fuera de las excepciones.
+- Verificación en la base real: el usuario de la aplicación no puede leer ni escribir tablas directamente y sí ejecutar los procedimientos.

@@ -25,6 +25,12 @@ from src.agents.security_agent.models import InvalidInputError
 BASE_KIND = "base_multiempresa"
 TABLE_KIND = "tabla"
 COMPANY_COLUMN = "id_empresa"
+# Versión 2: la aplicación accede a los datos solo por procedimientos del esquema app con un rol de solo EXECUTE.
+DEFINITION_VERSION = 2
+PROCEDURE_SCHEMA = "app"
+APP_ROLE = "rol_aplicacion"
+PROCEDURE_ENGINES = frozenset({"sqlserver"})
+LIST_LIMIT, MAX_LIST_LIMIT = 100, 1000
 RLS_ENGINES = frozenset({"sqlserver", "postgresql"})
 FK_ENGINES = frozenset({"sqlserver", "postgresql", "firebird"})
 MAX_SCRIPT_CHARS = 200_000
@@ -47,6 +53,14 @@ RETURN SELECT 1 AS permitido
 WHERE @id_empresa = CAST(SESSION_CONTEXT(N''id_empresa'') AS NVARCHAR(255)) OR IS_ROLEMEMBER(N''db_owner'') = 1');
 """
 
+SQLSERVER_ACCESS = f"""--| Acceso a datos solo por procedimientos: esquema {PROCEDURE_SCHEMA} y rol de la aplicación con solo EXECUTE |
+IF SCHEMA_ID(N'{PROCEDURE_SCHEMA}') IS NULL EXEC(N'CREATE SCHEMA {PROCEDURE_SCHEMA}');
+GO
+IF DATABASE_PRINCIPAL_ID(N'{APP_ROLE}') IS NULL CREATE ROLE {APP_ROLE};
+GO
+GRANT EXECUTE ON SCHEMA::{PROCEDURE_SCHEMA} TO {APP_ROLE};
+"""
+
 POSTGRES_BASE = """--| Base multiempresa: catálogo de empresas (la seguridad por fila usa current_setting('app.id_empresa')) |
 CREATE TABLE IF NOT EXISTS "public"."empresas" (
     "id_empresa" VARCHAR(255) NOT NULL CONSTRAINT "pk_empresas" PRIMARY KEY,
@@ -61,13 +75,17 @@ def canonical(definition: Dict[str, Any]) -> str:
     return json.dumps(definition, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-def base_definition(rls: bool) -> Dict[str, Any]:
-    return {"tipo": BASE_KIND, "version": 1, "seguridad_por_fila": bool(rls)}
+def base_definition(rls: bool, version: int = DEFINITION_VERSION) -> Dict[str, Any]:
+    return {"tipo": BASE_KIND, "version": version, "seguridad_por_fila": bool(rls)}
 
 
 def table_definition(table: TableDefinition, multi: bool, rls: bool) -> Dict[str, Any]:
-    return {"tipo": TABLE_KIND, "version": 1, "multiempresa": bool(multi), "seguridad_por_fila": bool(rls),
-            "tabla": table.model_dump(mode="json")}
+    return {"tipo": TABLE_KIND, "version": DEFINITION_VERSION, "multiempresa": bool(multi),
+            "seguridad_por_fila": bool(rls), "tabla": table.model_dump(mode="json")}
+
+
+def with_procedures(definition: Dict[str, Any]) -> bool:
+    return int(definition.get("version", 1)) >= 2
 
 
 def definition_table(definition: Dict[str, Any]) -> TableDefinition:
@@ -114,6 +132,77 @@ def _sqlserver_table(table: TableDefinition, multi: bool, rls: bool) -> str:
                 f"    EXEC({sql_string(statement)});"
             )
     return "\nGO\n".join(parts) + "\n"
+
+
+def _procedure(table: TableDefinition, action: str, params: list, body: list) -> str:
+    prefix = table.name if table.schema == "dbo" else f"{table.schema}_{table.name}"
+    header = f"CREATE OR ALTER PROCEDURE {PROCEDURE_SCHEMA}.{quote_identifier(f'{prefix}_{action}')}"
+    if params:
+        header += "\n" + ",\n".join(f"    {p}" for p in params)
+    return "\n".join([header, "AS", "BEGIN", "    SET NOCOUNT ON;", *(f"    {line}" for line in body), "END;"])
+
+
+def _sqlserver_procedures(table: TableDefinition, multi: bool) -> list:
+    """Procedimientos base de la tabla (obtener, listar, insertar, actualizar, eliminar) en el esquema app."""
+    dialect = SqlServerDialect()
+    target = f"{quote_identifier(table.schema)}.{quote_identifier(table.name)}"
+    pk = next(c for c in table.columns if c.primary_key)
+    data = [c for c in table.columns if not (multi and c.name == COMPANY_COLUMN)]
+    names = [c.name for c in table.columns] + (["created_at", "updated_at", "created_by"] if table.audit_columns else [])
+    select = ", ".join(quote_identifier(n) for n in names)
+    key = f"{quote_identifier(pk.name)} = @{pk.name}"
+
+    def param(column: ColumnDefinition, optional: bool) -> str:
+        return f"@{column.name} {dialect.TYPES[column.type]}" + (" = NULL" if optional else "")
+
+    def value(column: ColumnDefinition) -> str:
+        return f"COALESCE(@{column.name}, {dialect.default_literal(column)})" if column.default else f"@{column.name}"
+
+    insert_cols, insert_vals, insert_params = [], [], []
+    body_company = []
+    if multi:
+        body_company = [
+            f"DECLARE @{COMPANY_COLUMN} NVARCHAR(255) = CAST(SESSION_CONTEXT(N'{COMPANY_COLUMN}') AS NVARCHAR(255));",
+            f"IF @{COMPANY_COLUMN} IS NULL THROW 51000, N'La sesión no tiene empresa (SESSION_CONTEXT id_empresa).', 1;",
+        ]
+        insert_cols.append(quote_identifier(COMPANY_COLUMN))
+        insert_vals.append(f"@{COMPANY_COLUMN}")
+    for column in data:
+        insert_params.append(param(column, column.nullable and not column.primary_key or bool(column.default)))
+        insert_cols.append(quote_identifier(column.name))
+        insert_vals.append(value(column))
+    if table.audit_columns:
+        insert_params.append("@created_by NVARCHAR(100) = NULL")
+        insert_cols.append("[created_by]")
+        insert_vals.append("@created_by")
+
+    procedures = [
+        _procedure(table, "obtener", [param(pk, False)], [f"SELECT {select} FROM {target} WHERE {key};"]),
+        _procedure(table, "listar", [f"@limite INT = {LIST_LIMIT}"], [
+            f"SELECT TOP (CASE WHEN @limite BETWEEN 1 AND {MAX_LIST_LIMIT} THEN @limite ELSE {LIST_LIMIT} END) {select}",
+            f"FROM {target} ORDER BY {quote_identifier(pk.name)};",
+        ]),
+        _procedure(table, "insertar", insert_params, [
+            *body_company,
+            f"INSERT INTO {target} ({', '.join(insert_cols)})",
+            f"VALUES ({', '.join(insert_vals)});",
+        ]),
+    ]
+    updatable = [c for c in data if not c.primary_key]
+    if updatable:
+        sets = [f"{quote_identifier(c.name)} = "
+                + (f"COALESCE(@{c.name}, {quote_identifier(c.name)})" if c.default else f"@{c.name}")
+                for c in updatable]
+        if table.audit_columns:
+            sets.append("[updated_at] = SYSUTCDATETIME()")
+        procedures.append(_procedure(
+            table, "actualizar",
+            [param(pk, False), *(param(c, c.nullable or bool(c.default)) for c in updatable)],
+            [f"UPDATE {target} SET {', '.join(sets)} WHERE {key};", "SELECT @@ROWCOUNT AS filas;"],
+        ))
+    procedures.append(_procedure(table, "eliminar", [param(pk, False)],
+                                 [f"DELETE FROM {target} WHERE {key};", "SELECT @@ROWCOUNT AS filas;"]))
+    return procedures
 
 
 # ============================================================================ PostgreSQL
@@ -194,9 +283,15 @@ BASE_RENDERERS: Dict[str, Callable[[], str]] = {
 
 def render(definition: Dict[str, Any], motor: str) -> str:
     """Script de la definición neutral para el motor; ValueError si el motor no admite algo de la tabla."""
+    procedures = with_procedures(definition) and motor in PROCEDURE_ENGINES
     if definition["tipo"] == BASE_KIND:
-        return BASE_RENDERERS[motor]()
-    return TABLE_RENDERERS[motor](definition_table(definition), definition["multiempresa"], definition["seguridad_por_fila"])
+        script = BASE_RENDERERS[motor]()
+        return script + "GO\n" + SQLSERVER_ACCESS if procedures else script
+    table, multi = definition_table(definition), definition["multiempresa"]
+    script = TABLE_RENDERERS[motor](table, multi, definition["seguridad_por_fila"])
+    if not procedures:
+        return script
+    return script + "GO\n" + "\nGO\n".join(_sqlserver_procedures(table, multi)) + "\n"
 
 
 # ============================================================================ SQL escrito a mano
@@ -215,8 +310,18 @@ COMMON_FORBIDDEN = (
     (r"\bDROP\s+(TABLE|SCHEMA|SECURITY\s+POLICY|POLICY)\b|\bTRUNCATE\b", "borrado de objetos (las migraciones solo agregan)"),
     (r"\bdespliegue\s*\.|\bseguridad\s*\.|\bdespliegue_migraciones\b", "objetos internos de Nexus (despliegue, seguridad)"),
 )
+_TABLE_GRANT = (
+    r"\bGRANT\s+[\w\s,]*?\b(SELECT|INSERT|UPDATE|DELETE|ALTER|CONTROL|REFERENCES|TAKE\s+OWNERSHIP|ALL)\b[\w\s,]*?\bON\b",
+    "permisos directos sobre tablas (la aplicación solo ejecuta procedimientos: GRANT EXECUTE)",
+)
 ENGINE_FORBIDDEN = {
+    "sqlserver": (
+        _TABLE_GRANT,
+        (r"\bALTER\s+ROLE\s+\[?db_\w+\]?\s+ADD\s+MEMBER\b|\bsp_addrolemember\b", "miembros de roles fijos de la base"),
+        (r"\bALTER\s+SECURITY\s+POLICY\b[^;]*?\bSTATE\s*=\s*OFF\b", "desactivar la seguridad por fila"),
+    ),
     "postgresql": (
+        _TABLE_GRANT,
         (r"\bCOPY\b[^;]*\bPROGRAM\b", "COPY ... PROGRAM"),
         (r"\bpg_(read|write|ls|stat)_\w*|\blo_(import|export)\b", "archivos del servidor"),
         (r"\bdblink\w*|\bpostgres_fdw\b|\bCREATE\s+(SERVER|EXTENSION)\b", "acceso a otras bases o extensiones"),
@@ -260,6 +365,9 @@ def engine_warnings(motor: str, multi: bool, rls: bool) -> list:
         warnings.append(f"{motor} no tiene seguridad por fila: la aplicación debe filtrar siempre por {COMPANY_COLUMN}")
     if multi and motor not in FK_ENGINES:
         warnings.append(f"{motor} no aplica llaves foráneas: la aplicación debe validar {COMPANY_COLUMN} contra empresas")
+    if motor not in PROCEDURE_ENGINES:
+        warnings.append(f"Nexus genera los procedimientos almacenados solo en SQL Server: en {motor} escríbelos en una "
+                        "migración SQL y da a la aplicación solo permiso de ejecutarlos")
     return warnings
 
 

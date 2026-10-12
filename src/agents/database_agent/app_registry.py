@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 DATA_MODELS = ("por_empresa", "multiempresa")
 DATABASE_STATES = ("pendiente", "desplegada", "error")
@@ -306,15 +306,7 @@ class InMemoryAppRegistry(AppRegistry):
 
 
 class SqlServerAppRegistry(AppRegistry):
-    _APP_COLUMNS = ("id_aplicacion, nombre, modelo_datos, propietario, seguridad_por_fila, descripcion, id_solicitud, "
-                    "estado, creado_por, fecha_creacion, fecha_modificacion, motor, conexion")
-    _DB_COLUMNS = "nombre_base, id_aplicacion, id_empresa, estado, version, fecha_creacion, fecha_despliegue, ultimo_error"
-    _MIGRATION_COLUMNS = ("id_aplicacion, nombre, tipo, {script}, checksum, numero, descripcion, creado_por, fecha_creacion, "
-                          "definicion, motor")
-    _CHANGE_COLUMNS = ("id_cambio, id_aplicacion, motor_origen, conexion_origen, motor_destino, conexion_destino, version_origen, "
-                       "bases_origen, estado, detalle, solicitado_por, fecha_inicio, fecha_fin")
-    _DEPLOYMENT_COLUMNS = ("id_despliegue, id_aplicacion, nombre_base, estado, id_empresa, migraciones_aplicadas, "
-                           "version_resultante, detalle, ejecutado_por, fecha_inicio, fecha_fin")
+    """Registro sobre los procedimientos del esquema nexus de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -335,25 +327,20 @@ class SqlServerAppRegistry(AppRegistry):
                            fecha_creacion=row[5], fecha_despliegue=row[6], ultimo_error=row[7])
 
     @staticmethod
-    def _insert_database(cur, database: AppDatabase) -> bool:
-        cur.execute(
-            f"INSERT INTO dbo.nexus_bases_datos ({SqlServerAppRegistry._DB_COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, ?, ? "
-            "WHERE NOT EXISTS (SELECT 1 FROM dbo.nexus_bases_datos WITH (UPDLOCK, HOLDLOCK) WHERE nombre_base = ?)",
-            (database.nombre_base, database.id_aplicacion, database.id_empresa, database.estado, database.version,
-             database.fecha_creacion, database.fecha_despliegue, database.ultimo_error, database.nombre_base),
-        )
-        return cur.rowcount == 1
+    def _insert_database(cur, d: AppDatabase) -> bool:
+        return afectadas(ejecutar(
+            cur, "nexus.base_datos_insertar", nombre_base=d.nombre_base, id_aplicacion=d.id_aplicacion, id_empresa=d.id_empresa,
+            estado=d.estado, version=d.version, fecha_creacion=d.fecha_creacion, fecha_despliegue=d.fecha_despliegue,
+            ultimo_error=d.ultimo_error)) == 1
 
     def create_app(self, app, databases, migrations) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.nexus_aplicaciones ({self._APP_COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.nexus_aplicaciones WITH (UPDLOCK, HOLDLOCK) WHERE id_aplicacion = ?)",
-                (app.id_aplicacion, app.nombre, app.modelo_datos, app.propietario, app.seguridad_por_fila, app.descripcion,
-                 app.id_solicitud, app.estado, app.creado_por, app.fecha_creacion, app.fecha_modificacion, app.motor,
-                 app.conexion, app.id_aplicacion),
-            )
-            if cur.rowcount != 1:
+            created = afectadas(ejecutar(
+                cur, "nexus.aplicacion_insertar", id_aplicacion=app.id_aplicacion, nombre=app.nombre, modelo_datos=app.modelo_datos,
+                propietario=app.propietario, seguridad_por_fila=app.seguridad_por_fila, descripcion=app.descripcion,
+                id_solicitud=app.id_solicitud, estado=app.estado, creado_por=app.creado_por, fecha_creacion=app.fecha_creacion,
+                fecha_modificacion=app.fecha_modificacion, motor=app.motor, conexion=app.conexion))
+            if created != 1:
                 return False
             for database in databases:
                 if not self._insert_database(cur, database):
@@ -365,32 +352,23 @@ class SqlServerAppRegistry(AppRegistry):
 
     def get_app(self, id_aplicacion, propietario):
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._APP_COLUMNS} FROM dbo.nexus_aplicaciones WHERE id_aplicacion = ? AND propietario = ?",
-                        (id_aplicacion, propietario))
-            row = cur.fetchone()
+            row = ejecutar(cur, "nexus.aplicacion_obtener", id_aplicacion=id_aplicacion, propietario=propietario).fetchone()
         return self._app(row) if row else None
 
     def list_apps(self, propietario):
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._APP_COLUMNS} FROM dbo.nexus_aplicaciones WHERE propietario = ? ORDER BY id_aplicacion",
-                        (propietario,))
-            return [self._app(r) for r in cur.fetchall()]
+            return [self._app(r) for r in ejecutar(cur, "nexus.aplicacion_listar", propietario=propietario).fetchall()]
 
     def database_registered(self, nombre_base):
         with self._db.cursor() as cur:
-            cur.execute("SELECT 1 FROM dbo.nexus_bases_datos WHERE nombre_base = ?", (nombre_base,))
-            return cur.fetchone() is not None
+            return ejecutar(cur, "nexus.base_datos_registrada", nombre_base=nombre_base).fetchone() is not None
 
     def add_company(self, company, database) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.nexus_aplicacion_empresas (id_aplicacion, id_empresa, nombre, estado, fecha_registro) "
-                "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM dbo.nexus_aplicacion_empresas WITH (UPDLOCK, HOLDLOCK) "
-                "WHERE id_aplicacion = ? AND id_empresa = ?)",
-                (company.id_aplicacion, company.id_empresa, company.nombre, company.estado, company.fecha_registro,
-                 company.id_aplicacion, company.id_empresa),
-            )
-            if cur.rowcount != 1:
+            created = afectadas(ejecutar(
+                cur, "nexus.empresa_insertar", id_aplicacion=company.id_aplicacion, id_empresa=company.id_empresa,
+                nombre=company.nombre, estado=company.estado, fecha_registro=company.fecha_registro))
+            if created != 1:
                 return False
             if database is not None and not self._insert_database(cur, database):
                 cur.connection.rollback()
@@ -399,55 +377,38 @@ class SqlServerAppRegistry(AppRegistry):
 
     def companies(self, id_aplicacion):
         with self._db.cursor() as cur:
-            cur.execute("SELECT id_aplicacion, id_empresa, nombre, estado, fecha_registro FROM dbo.nexus_aplicacion_empresas "
-                        "WHERE id_aplicacion = ? ORDER BY id_empresa", (id_aplicacion,))
-            return [AppCompany(*r) for r in cur.fetchall()]
+            return [AppCompany(*r) for r in ejecutar(cur, "nexus.empresa_listar", id_aplicacion=id_aplicacion).fetchall()]
 
     def databases(self, id_aplicacion):
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._DB_COLUMNS} FROM dbo.nexus_bases_datos WHERE id_aplicacion = ? ORDER BY nombre_base",
-                        (id_aplicacion,))
-            return [self._database(r) for r in cur.fetchall()]
+            return [self._database(r) for r in ejecutar(cur, "nexus.base_datos_listar", id_aplicacion=id_aplicacion).fetchall()]
 
     def update_database(self, nombre_base, estado, version, error, now) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.nexus_bases_datos SET estado = ?, version = COALESCE(?, version), ultimo_error = ?, "
-                "fecha_despliegue = CASE WHEN ? = 'desplegada' THEN ? ELSE fecha_despliegue END WHERE nombre_base = ?",
-                (estado, version, error, estado, now, nombre_base),
-            )
+            ejecutar(cur, "nexus.base_datos_actualizar", nombre_base=nombre_base, estado=estado, version=version,
+                     ultimo_error=error, ahora=now)
 
     @staticmethod
-    def _insert_migration(cur, migration: Migration, numero: int) -> None:
-        cur.execute(
-            "INSERT INTO dbo.nexus_migraciones (id_aplicacion, numero, nombre, tipo, descripcion, script, checksum, "
-            "creado_por, fecha_creacion, definicion, motor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (migration.id_aplicacion, numero, migration.nombre, migration.tipo, migration.descripcion, migration.script,
-             migration.checksum, migration.creado_por, migration.fecha_creacion, migration.definicion, migration.motor),
-        )
+    def _migration_values(m: Migration) -> Dict[str, Any]:
+        return dict(nombre=m.nombre, tipo=m.tipo, descripcion=m.descripcion, script=m.script, checksum=m.checksum,
+                    creado_por=m.creado_por, fecha_creacion=m.fecha_creacion, definicion=m.definicion, motor=m.motor)
+
+    @classmethod
+    def _insert_migration(cls, cur, migration: Migration, numero: int) -> None:
+        ejecutar(cur, "nexus.migracion_insertar", id_aplicacion=migration.id_aplicacion, numero=numero,
+                 **cls._migration_values(migration))
 
     def add_migration(self, migration) -> Optional[int]:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "SELECT ISNULL(MAX(numero), 0) + 1, SUM(CASE WHEN nombre = ? THEN 1 ELSE 0 END) "
-                "FROM dbo.nexus_migraciones WITH (UPDLOCK, HOLDLOCK) WHERE id_aplicacion = ?",
-                (migration.nombre, migration.id_aplicacion),
-            )
-            numero, duplicated = cur.fetchone()
-            if duplicated:
-                return None
-            self._insert_migration(cur, migration, numero)
-            return numero
+            row = ejecutar(cur, "nexus.migracion_agregar", id_aplicacion=migration.id_aplicacion,
+                           **self._migration_values(migration)).fetchone()
+            return row[0]
 
     def migrations(self, id_aplicacion, with_script=True):
-        columns = self._MIGRATION_COLUMNS.format(script="script" if with_script else "N''")
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {columns} FROM dbo.nexus_migraciones WHERE id_aplicacion = ? ORDER BY numero", (id_aplicacion,))
-            rows = cur.fetchall()
+            rows = ejecutar(cur, "nexus.migracion_listar", id_aplicacion=id_aplicacion, con_script=with_script).fetchall()
+            cur.nextset()
             equivalents: Dict[int, Dict[str, str]] = {}
-            script_column = "script" if with_script else "N''"
-            cur.execute(f"SELECT numero, motor, {script_column} FROM dbo.nexus_migracion_equivalentes WHERE id_aplicacion = ?",
-                        (id_aplicacion,))
             for numero, motor, script in cur.fetchall():
                 equivalents.setdefault(numero, {})[motor] = script
         return [Migration(*r[:5], numero=r[5], descripcion=r[6], creado_por=r[7] or "", fecha_creacion=r[8],
@@ -455,79 +416,51 @@ class SqlServerAppRegistry(AppRegistry):
                 for r in rows]
 
     def record_deployment(self, deployment) -> None:
+        d = deployment
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.nexus_despliegues ({self._DEPLOYMENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (deployment.id_despliegue, deployment.id_aplicacion, deployment.nombre_base, deployment.estado,
-                 deployment.id_empresa, dumps(deployment.migraciones_aplicadas), deployment.version_resultante,
-                 deployment.detalle, deployment.ejecutado_por, deployment.fecha_inicio, deployment.fecha_fin),
-            )
+            ejecutar(cur, "nexus.despliegue_insertar", id_despliegue=d.id_despliegue, id_aplicacion=d.id_aplicacion,
+                     nombre_base=d.nombre_base, estado=d.estado, id_empresa=d.id_empresa,
+                     migraciones_aplicadas=dumps(d.migraciones_aplicadas), version_resultante=d.version_resultante,
+                     detalle=d.detalle, ejecutado_por=d.ejecutado_por, fecha_inicio=d.fecha_inicio, fecha_fin=d.fecha_fin)
 
     def deployments(self, id_aplicacion, limit):
         with self._db.cursor() as cur:
-            cur.execute(
-                f"SELECT TOP (?) {self._DEPLOYMENT_COLUMNS} FROM dbo.nexus_despliegues WHERE id_aplicacion = ? "
-                "ORDER BY fecha_inicio DESC",
-                (limit, id_aplicacion),
-            )
-            return [Deployment(id_despliegue=r[0], id_aplicacion=r[1], nombre_base=r[2], estado=r[3], id_empresa=r[4],
-                               migraciones_aplicadas=loads(r[5], []), version_resultante=r[6] or 0, detalle=r[7],
-                               ejecutado_por=r[8] or "", fecha_inicio=r[9], fecha_fin=r[10])
-                    for r in cur.fetchall()]
+            rows = ejecutar(cur, "nexus.despliegue_listar", id_aplicacion=id_aplicacion, limite=limit).fetchall()
+        return [Deployment(id_despliegue=r[0], id_aplicacion=r[1], nombre_base=r[2], estado=r[3], id_empresa=r[4],
+                           migraciones_aplicadas=loads(r[5], []), version_resultante=r[6] or 0, detalle=r[7],
+                           ejecutado_por=r[8] or "", fecha_inicio=r[9], fecha_fin=r[10])
+                for r in rows]
 
     def add_equivalent(self, id_aplicacion, numero, motor, script, checksum, actor, now) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.nexus_migracion_equivalentes (id_aplicacion, numero, motor, script, checksum, creado_por, "
-                "fecha_creacion) SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM dbo.nexus_migracion_equivalentes "
-                "WITH (UPDLOCK, HOLDLOCK) WHERE id_aplicacion = ? AND numero = ? AND motor = ?)",
-                (id_aplicacion, numero, motor, script, checksum, actor, now, id_aplicacion, numero, motor),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "nexus.equivalente_insertar", id_aplicacion=id_aplicacion, numero=numero, motor=motor,
+                                      script=script, checksum=checksum, creado_por=actor, fecha_creacion=now)) == 1
 
     def start_engine_change(self, change) -> bool:
+        c = change
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.nexus_cambios_motor ({self._CHANGE_COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.nexus_cambios_motor WITH (UPDLOCK, HOLDLOCK) WHERE id_aplicacion = ? "
-                "AND estado NOT IN (N'completado', N'revertido'))",
-                (change.id_cambio, change.id_aplicacion, change.motor_origen, change.conexion_origen, change.motor_destino,
-                 change.conexion_destino, change.version_origen, dumps(change.bases_origen), change.estado,
-                 dumps(change.detalle), change.solicitado_por, change.fecha_inicio, change.fecha_fin, change.id_aplicacion),
-            )
-            if cur.rowcount != 1:
-                return False
-            cur.execute("UPDATE dbo.nexus_aplicaciones SET motor = ?, conexion = ?, fecha_modificacion = ? WHERE id_aplicacion = ?",
-                        (change.motor_destino, change.conexion_destino, change.fecha_inicio, change.id_aplicacion))
-            cur.execute("UPDATE dbo.nexus_bases_datos SET estado = N'pendiente', version = 0, ultimo_error = NULL "
-                        "WHERE id_aplicacion = ?", (change.id_aplicacion,))
-            return True
+            return afectadas(ejecutar(
+                cur, "nexus.cambio_motor_iniciar", id_cambio=c.id_cambio, id_aplicacion=c.id_aplicacion, motor_origen=c.motor_origen,
+                conexion_origen=c.conexion_origen, motor_destino=c.motor_destino, conexion_destino=c.conexion_destino,
+                version_origen=c.version_origen, bases_origen=dumps(c.bases_origen), estado=c.estado, detalle=dumps(c.detalle),
+                solicitado_por=c.solicitado_por, fecha_inicio=c.fecha_inicio, fecha_fin=c.fecha_fin)) == 1
 
     def update_engine_change(self, id_cambio, estado, detalle, fecha_fin) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("UPDATE dbo.nexus_cambios_motor SET estado = ?, detalle = ?, fecha_fin = ? WHERE id_cambio = ?",
-                        (estado, dumps(detalle), fecha_fin, id_cambio))
+            ejecutar(cur, "nexus.cambio_motor_actualizar", id_cambio=id_cambio, estado=estado, detalle=dumps(detalle),
+                     fecha_fin=fecha_fin)
 
     def revert_engine_change(self, change, now) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("UPDATE dbo.nexus_cambios_motor SET estado = N'revertido', fecha_fin = ? "
-                        "WHERE id_cambio = ? AND estado NOT IN (N'completado', N'revertido')", (now, change.id_cambio))
-            if cur.rowcount != 1:
-                return False
-            cur.execute("UPDATE dbo.nexus_aplicaciones SET motor = ?, conexion = ?, fecha_modificacion = ? WHERE id_aplicacion = ?",
-                        (change.motor_origen, change.conexion_origen, now, change.id_aplicacion))
-            cur.execute("UPDATE dbo.nexus_bases_datos SET estado = N'pendiente', version = 0, ultimo_error = NULL "
-                        "WHERE id_aplicacion = ?", (change.id_aplicacion,))
-            for name, origin in change.bases_origen.items():
-                cur.execute("UPDATE dbo.nexus_bases_datos SET estado = ?, version = ?, ultimo_error = ? WHERE nombre_base = ?",
-                            (origin.get("estado", "pendiente"), origin.get("version", 0), origin.get("ultimo_error"), name))
-            return True
+            return afectadas(ejecutar(
+                cur, "nexus.cambio_motor_revertir", id_cambio=change.id_cambio, id_aplicacion=change.id_aplicacion,
+                motor_origen=change.motor_origen, conexion_origen=change.conexion_origen, bases_origen=dumps(change.bases_origen),
+                ahora=now)) == 1
 
     def engine_changes(self, id_aplicacion, limit):
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT TOP (?) {self._CHANGE_COLUMNS} FROM dbo.nexus_cambios_motor WHERE id_aplicacion = ? "
-                        "ORDER BY fecha_inicio DESC", (limit, id_aplicacion))
-            return [EngineChange(id_cambio=r[0], id_aplicacion=r[1], motor_origen=r[2], conexion_origen=r[3], motor_destino=r[4],
-                                 conexion_destino=r[5], version_origen=r[6], bases_origen=loads(r[7], {}), estado=r[8],
-                                 detalle=loads(r[9], {}), solicitado_por=r[10] or "", fecha_inicio=r[11], fecha_fin=r[12])
-                    for r in cur.fetchall()]
+            rows = ejecutar(cur, "nexus.cambio_motor_listar", id_aplicacion=id_aplicacion, limite=limit).fetchall()
+        return [EngineChange(id_cambio=r[0], id_aplicacion=r[1], motor_origen=r[2], conexion_origen=r[3], motor_destino=r[4],
+                             conexion_destino=r[5], version_origen=r[6], bases_origen=loads(r[7], {}), estado=r[8],
+                             detalle=loads(r[9], {}), solicitado_por=r[10] or "", fecha_inicio=r[11], fecha_fin=r[12])
+                for r in rows]

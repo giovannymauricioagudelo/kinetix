@@ -1,6 +1,8 @@
 """
 Verificación de Nexus y Matrix contra SQL Server real sin dejar cambios: todo corre en una transacción con rollback.
 Uso: venv\\Scripts\\python.exe scripts\\verify_nexus_matrix_sqlserver.py
+
+acceso-datos: excepcion-administracion (verificación con la credencial de administrador de .env)
 """
 
 from __future__ import annotations

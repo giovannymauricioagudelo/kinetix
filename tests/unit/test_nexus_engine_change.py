@@ -115,6 +115,53 @@ def test_manual_scripts_are_validated_per_engine(motor, script):
         validate_script(script, motor)
 
 
+def test_sqlserver_table_gets_crud_procedures_in_app_schema():
+    script = render(_clientes(), "sqlserver")
+    for action in ("obtener", "listar", "insertar", "actualizar", "eliminar"):
+        assert f"CREATE OR ALTER PROCEDURE app.[clientes_{action}]" in script
+    insertar = script.split("app.[clientes_insertar]")[1].split("END;")[0]
+    assert "SESSION_CONTEXT(N'id_empresa')" in insertar and "THROW 51000" in insertar
+    assert "@id_empresa NVARCHAR" not in insertar.split("AS\nBEGIN")[0]
+    assert "SELECT *" not in script and "sp_executesql" not in script
+    assert "TOP (CASE WHEN @limite BETWEEN 1 AND 1000" in script
+    estado = TableDefinition(name="t", company_column=False, warehouse_column=False, audit_columns=False, columns=[
+        {"name": "id", "type": "varchar", "nullable": False, "primary_key": True},
+        {"name": "estado", "type": "varchar", "nullable": False, "default": "activo"}])
+    actualizar = render(table_definition(estado, False, False), "sqlserver").split("app.[t_actualizar]")[1]
+    assert "[estado] = COALESCE(@estado, [estado])" in actualizar
+
+
+def test_procedures_only_for_new_definitions_and_sqlserver():
+    legacy = {**_clientes(), "version": 1}
+    assert "PROCEDURE" not in render(legacy, "sqlserver")
+    assert "PROCEDURE" not in render(_clientes(), "postgresql")
+    assert "rol_aplicacion" not in render(base_definition(True, version=1), "sqlserver")
+    base = render(base_definition(True), "sqlserver")
+    assert "CREATE ROLE rol_aplicacion" in base and "GRANT EXECUTE ON SCHEMA::app TO rol_aplicacion" in base
+    assert "GRANT SELECT" not in base
+
+
+@pytest.mark.parametrize("motor, script", [
+    ("sqlserver", "GRANT SELECT, INSERT ON SCHEMA::dbo TO app_rol;"),
+    ("sqlserver", "GRANT DELETE ON dbo.pedidos TO app_rol"),
+    ("sqlserver", "GRANT ALL ON dbo.pedidos TO app_rol"),
+    ("sqlserver", "ALTER ROLE db_datareader ADD MEMBER app_user"),
+    ("sqlserver", "ALTER SECURITY POLICY seguridad.politica_pedidos WITH (STATE = OFF)"),
+    ("postgresql", "GRANT SELECT ON pedidos TO app_rol;"),
+])
+def test_manual_scripts_cannot_grant_table_access(motor, script):
+    with pytest.raises(InvalidInputError):
+        validate_script(script, motor)
+
+
+def test_manual_scripts_can_grant_execute_and_revoke_tables():
+    script = ("GRANT EXECUTE ON SCHEMA::app TO app_rol;\nGO\n"
+              "REVOKE SELECT, INSERT, UPDATE, DELETE ON SCHEMA::dbo FROM app_rol;\nGO\n"
+              "CREATE OR ALTER PROCEDURE app.pedido_obtener @id NVARCHAR(50) AS\n"
+              "BEGIN SET NOCOUNT ON; SELECT id, total FROM dbo.pedidos WHERE id = @id; END;")
+    assert validate_script(script, "sqlserver")
+
+
 def test_valid_manual_scripts_pass_per_engine():
     assert validate_script("ALTER TABLE pedidos ADD COLUMN nota TEXT;", "postgresql")
     assert validate_script('[{"collMod": "pedidos", "validationLevel": "moderate"}]', "mongodb")
@@ -133,7 +180,8 @@ def test_app_chooses_engine_and_default_connection(nexus, servers):
 
     mongo = nexus.register_app("ana", "gio", {"id_aplicacion": "logs", "nombre": "Logs", "modelo_datos": "multiempresa",
                                               "motor": "mongodb"})
-    assert mongo["seguridad_por_fila"] is False and len(mongo["advertencias"]) == 2
+    assert mongo["seguridad_por_fila"] is False and len(mongo["advertencias"]) == 3
+    assert any("procedimientos" in a for a in mongo["advertencias"])
     with pytest.raises(InvalidInputError, match="es mongodb"):
         nexus.register_app("ana", "gio", {"id_aplicacion": "x1", "nombre": "X", "modelo_datos": "por_empresa",
                                           "motor": "sqlserver", "conexion": "docs"})

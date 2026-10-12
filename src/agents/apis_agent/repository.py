@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.agents.common import dumps, loads
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 
 @dataclass(frozen=True)
@@ -152,11 +152,7 @@ class InMemoryIntegrationRepository(IntegrationRepository):
 
 
 class SqlServerIntegrationRepository(IntegrationRepository):
-    _COLUMNS = ("id_integracion, id_empresa, nombre, descripcion, url_base, tipo_auth, auth_meta, credencial_cifrada, encabezados, "
-                "timeout_s, reintentos, limite_por_minuto, estado, especificacion, version, creado_por, fecha_creacion, "
-                "fecha_modificacion, ultimo_estado_salud, ultima_verificacion")
-    _CALL_COLUMNS = ("id_llamada, id_integracion, id_empresa, metodo, ruta, id_operacion, codigo_http, exito, duracion_ms, intentos, "
-                     "error, origen, usuario, fecha")
+    """Persistencia sobre los procedimientos del esquema synapse de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -175,85 +171,60 @@ class SqlServerIntegrationRepository(IntegrationRepository):
         )
 
     @staticmethod
-    def _values(i: Integration) -> tuple:
-        return (i.id_integracion, i.id_empresa, i.nombre, i.descripcion, i.url_base, i.tipo_auth, dumps(i.auth_meta), i.credencial,
-                dumps(i.encabezados), i.timeout_s, i.reintentos, i.limite_por_minuto, i.estado,
-                dumps(i.especificacion) if i.especificacion is not None else None, i.version, i.creado_por, i.fecha_creacion,
-                i.fecha_modificacion, i.ultimo_estado_salud, i.ultima_verificacion)
+    def _values(i: Integration) -> Dict[str, Any]:
+        return dict(id_integracion=i.id_integracion, id_empresa=i.id_empresa, nombre=i.nombre, descripcion=i.descripcion,
+                    url_base=i.url_base, tipo_auth=i.tipo_auth, auth_meta=dumps(i.auth_meta), credencial_cifrada=i.credencial,
+                    encabezados=dumps(i.encabezados), timeout_s=i.timeout_s, reintentos=i.reintentos,
+                    limite_por_minuto=i.limite_por_minuto, estado=i.estado,
+                    especificacion=dumps(i.especificacion) if i.especificacion is not None else None)
 
     def create(self, integration: Integration) -> bool:
+        i = integration
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.synapse_integraciones ({self._COLUMNS}) SELECT {', '.join('?' * 20)} "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.synapse_integraciones WITH (UPDLOCK, HOLDLOCK) WHERE id_empresa = ? AND nombre = ?)",
-                (*self._values(integration), integration.id_empresa, integration.nombre),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "synapse.integracion_insertar", **self._values(i), version=i.version,
+                                      creado_por=i.creado_por, fecha_creacion=i.fecha_creacion,
+                                      fecha_modificacion=i.fecha_modificacion, ultimo_estado_salud=i.ultimo_estado_salud,
+                                      ultima_verificacion=i.ultima_verificacion)) == 1
 
     def get(self, id_integracion: str, id_empresa: str) -> Optional[Integration]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.synapse_integraciones WHERE id_integracion = ? AND id_empresa = ?",
-                        (id_integracion, id_empresa))
-            row = cur.fetchone()
+            row = ejecutar(cur, "synapse.integracion_obtener", id_integracion=id_integracion, id_empresa=id_empresa).fetchone()
         return self._integration(row) if row else None
 
     def list(self, id_empresa: str) -> List[Integration]:
         with self._db.cursor() as cur:
-            cur.execute(f"SELECT {self._COLUMNS} FROM dbo.synapse_integraciones WHERE id_empresa = ? ORDER BY nombre", (id_empresa,))
-            rows = cur.fetchall()
+            rows = ejecutar(cur, "synapse.integracion_listar", id_empresa=id_empresa).fetchall()
         return [self._integration(r) for r in rows]
 
     def count(self, id_empresa: str) -> int:
         with self._db.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM dbo.synapse_integraciones WHERE id_empresa = ?", (id_empresa,))
-            return cur.fetchone()[0]
+            return ejecutar(cur, "synapse.integracion_contar", id_empresa=id_empresa).fetchone()[0]
 
     def update(self, integration: Integration, expected_version: int) -> bool:
-        i = integration
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.synapse_integraciones SET nombre = ?, descripcion = ?, url_base = ?, tipo_auth = ?, auth_meta = ?, "
-                "credencial_cifrada = ?, encabezados = ?, timeout_s = ?, reintentos = ?, limite_por_minuto = ?, estado = ?, "
-                "especificacion = ?, version = version + 1, fecha_modificacion = ? "
-                "WHERE id_integracion = ? AND id_empresa = ? AND version = ? AND NOT EXISTS ("
-                "SELECT 1 FROM dbo.synapse_integraciones o WHERE o.id_empresa = ? AND o.nombre = ? AND o.id_integracion <> ?)",
-                (i.nombre, i.descripcion, i.url_base, i.tipo_auth, dumps(i.auth_meta), i.credencial, dumps(i.encabezados), i.timeout_s,
-                 i.reintentos, i.limite_por_minuto, i.estado, dumps(i.especificacion) if i.especificacion is not None else None,
-                 i.fecha_modificacion, i.id_integracion, i.id_empresa, expected_version, i.id_empresa, i.nombre, i.id_integracion),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "synapse.integracion_actualizar", **self._values(integration),
+                                      fecha_modificacion=integration.fecha_modificacion, version_esperada=expected_version)) == 1
 
     def delete(self, id_integracion: str, id_empresa: str) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("DELETE FROM dbo.synapse_integraciones WHERE id_integracion = ? AND id_empresa = ?", (id_integracion, id_empresa))
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "synapse.integracion_eliminar", id_integracion=id_integracion, id_empresa=id_empresa)) == 1
 
     def set_health(self, id_integracion: str, estado: str, at: datetime) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute("UPDATE dbo.synapse_integraciones SET ultimo_estado_salud = ?, ultima_verificacion = ? WHERE id_integracion = ?",
-                        (estado, at, id_integracion))
+            ejecutar(cur, "synapse.integracion_salud", id_integracion=id_integracion, estado=estado, fecha=at)
 
     def log_call(self, record: CallRecord) -> None:
         r = record
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                f"INSERT INTO dbo.synapse_llamadas ({self._CALL_COLUMNS}) VALUES ({', '.join('?' * 14)})",
-                (r.id_llamada, r.id_integracion, r.id_empresa, r.metodo, r.ruta[:500], r.id_operacion, r.codigo_http, r.exito,
-                 r.duracion_ms, r.intentos, (r.error or None) and r.error[:500], r.origen, r.usuario, r.fecha),
-            )
+            ejecutar(cur, "synapse.llamada_insertar", id_llamada=r.id_llamada, id_integracion=r.id_integracion,
+                     id_empresa=r.id_empresa, metodo=r.metodo, ruta=r.ruta[:500], id_operacion=r.id_operacion,
+                     codigo_http=r.codigo_http, exito=r.exito, duracion_ms=r.duracion_ms, intentos=r.intentos,
+                     error=(r.error or None) and r.error[:500], origen=r.origen, usuario=r.usuario, fecha=r.fecha)
 
     def calls(self, id_empresa: str, id_integracion: Optional[str], desde: Optional[datetime], limit: int) -> List[CallRecord]:
-        sql = f"SELECT TOP (?) {self._CALL_COLUMNS} FROM dbo.synapse_llamadas WHERE id_empresa = ?"
-        params: List[Any] = [limit, id_empresa]
-        if id_integracion:
-            sql += " AND id_integracion = ?"
-            params.append(id_integracion)
-        if desde:
-            sql += " AND fecha >= ?"
-            params.append(desde)
         with self._db.cursor() as cur:
-            cur.execute(sql + " ORDER BY fecha DESC", params)
-            rows = cur.fetchall()
+            rows = ejecutar(cur, "synapse.llamada_listar", id_empresa=id_empresa, id_integracion=id_integracion or None,
+                            desde=desde or None, limite=limit).fetchall()
         return [CallRecord(id_llamada=r[0], id_integracion=r[1], id_empresa=r[2], metodo=r[3], ruta=r[4], id_operacion=r[5],
                            codigo_http=r[6], exito=bool(r[7]), duracion_ms=float(r[8]), intentos=r[9], error=r[10], origen=r[11],
                            usuario=r[12] or "", fecha=r[13]) for r in rows]

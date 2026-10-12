@@ -18,7 +18,7 @@ from src.agents.business_rules_agent.agent import (
     RuleStatus,
     ScopeLevel,
 )
-from src.agents.sqlserver import SqlServerClient
+from src.agents.sqlserver import SqlServerClient, afectadas, ejecutar
 
 STATUS_TO_DB = {
     RuleStatus.ACTIVE: "activa",
@@ -161,10 +161,7 @@ def _decode_details(raw: Optional[str]) -> Dict[str, Any]:
 
 
 class SqlServerRulesRepository(RulesRepository):
-    _RULE_COLUMNS = (
-        "r.id_regla, r.nombre, r.descripcion, r.nivel_alcance, r.linea_negocio, r.id_empresa, "
-        "r.estado, r.prioridad, r.fecha_creacion, r.modificada_por"
-    )
+    """Persistencia sobre los procedimientos del esquema matrix de la base kinetix."""
 
     def __init__(self, client: SqlServerClient) -> None:
         self._db = client
@@ -172,27 +169,16 @@ class SqlServerRulesRepository(RulesRepository):
     def ping(self) -> None:
         self._db.ping()
 
-    def _load(self, cur, where: str, params: Tuple[Any, ...]) -> List[BusinessRule]:
-        cur.execute(f"SELECT {self._RULE_COLUMNS} FROM dbo.reglas_negocio r {where} "
-                    "ORDER BY COALESCE(r.prioridad, 0) DESC, r.id_regla", params)
-        rows = cur.fetchall()
-        if not rows:
-            return []
-        cur.execute(
-            f"SELECT c.id_regla, c.campo, c.operador, c.valor, c.operador_logico FROM dbo.condiciones_regla c "
-            f"JOIN dbo.reglas_negocio r ON r.id_regla = c.id_regla {where} ORDER BY c.id_regla, c.orden, c.id_condicion",
-            params,
-        )
+    @staticmethod
+    def _load(cur, **filtros: Any) -> List[BusinessRule]:
+        rows = ejecutar(cur, "matrix.regla_listar", **filtros).fetchall()
+        cur.nextset()
         conditions: Dict[str, List[Condition]] = {}
         for rule_id, campo, operador, valor, logico in cur.fetchall():
             conditions.setdefault(rule_id, []).append(
                 Condition(campo, OperatorType(operador), valor, (logico or "AND").upper())
             )
-        cur.execute(
-            f"SELECT a.id_regla, a.tipo_accion, a.detalles, a.es_critica FROM dbo.acciones_regla a "
-            f"JOIN dbo.reglas_negocio r ON r.id_regla = a.id_regla {where} ORDER BY a.id_regla, a.orden, a.id_accion",
-            params,
-        )
+        cur.nextset()
         actions: Dict[str, List[RuleAction]] = {}
         for rule_id, tipo, detalles, critica in cur.fetchall():
             actions.setdefault(rule_id, []).append(RuleAction(ActionType(tipo), _decode_details(detalles), bool(critica)))
@@ -215,98 +201,61 @@ class SqlServerRulesRepository(RulesRepository):
         ]
 
     def list_rules(self, scope=None, empresa_id=None, business_line=None, status=None) -> List[BusinessRule]:
-        clauses, params = [], []
-        for column, value in (("r.nivel_alcance", scope), ("r.id_empresa", empresa_id), ("r.linea_negocio", business_line)):
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        if status is not None:
-            clauses.append("COALESCE(r.estado, 'activa') = ?")
-            params.append(STATUS_TO_DB[status])
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._db.cursor() as cur:
-            return self._load(cur, where, tuple(params))
+            return self._load(cur, nivel_alcance=scope, id_empresa=empresa_id, linea_negocio=business_line,
+                              estado=STATUS_TO_DB[status] if status is not None else None)
 
     def get_rule(self, rule_id: str) -> Optional[BusinessRule]:
         with self._db.cursor() as cur:
-            rules = self._load(cur, "WHERE r.id_regla = ?", (rule_id,))
+            rules = self._load(cur, id_regla=rule_id)
         return rules[0] if rules else None
 
-    def _insert_children(self, cur, rule: BusinessRule) -> None:
+    @staticmethod
+    def _insert_children(cur, rule: BusinessRule) -> None:
         for orden, c in enumerate(rule.conditions, start=1):
-            cur.execute(
-                "INSERT INTO dbo.condiciones_regla (id_regla, campo, operador, valor, orden, operador_logico) VALUES (?, ?, ?, ?, ?, ?)",
-                (rule.rule_id, c.field, c.operator.value, _encode_value(c.value), orden, c.logical_operator),
-            )
+            ejecutar(cur, "matrix.condicion_insertar", id_regla=rule.rule_id, campo=c.field, operador=c.operator.value,
+                     valor=_encode_value(c.value), orden=orden, operador_logico=c.logical_operator)
         for orden, a in enumerate(rule.actions, start=1):
-            cur.execute(
-                "INSERT INTO dbo.acciones_regla (id_regla, tipo_accion, detalles, orden, es_critica) VALUES (?, ?, ?, ?, ?)",
-                (rule.rule_id, a.type.value, _encode_details(a.details), orden, a.critical),
-            )
+            ejecutar(cur, "matrix.accion_insertar", id_regla=rule.rule_id, tipo_accion=a.type.value,
+                     detalles=_encode_details(a.details), orden=orden, es_critica=a.critical)
+
+    @staticmethod
+    def _rule_values(rule: BusinessRule, actor: str, now: datetime) -> Dict[str, Any]:
+        return dict(id_regla=rule.rule_id, nombre=rule.name, descripcion=rule.description, nivel_alcance=rule.scope.value,
+                    linea_negocio=rule.business_line, id_empresa=rule.empresa_id, estado=STATUS_TO_DB[rule.status],
+                    prioridad=rule.priority, ahora=now, actor=actor)
 
     def create_rule(self, rule: BusinessRule, actor: str, now: datetime) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.reglas_negocio (id_regla, nombre, descripcion, nivel_alcance, linea_negocio, id_empresa, "
-                "estado, prioridad, fecha_creacion, fecha_modificacion, modificada_por) "
-                "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.reglas_negocio WITH (UPDLOCK, HOLDLOCK) WHERE id_regla = ?)",
-                (rule.rule_id, rule.name, rule.description, rule.scope.value, rule.business_line, rule.empresa_id,
-                 STATUS_TO_DB[rule.status], rule.priority, now, now, actor, rule.rule_id),
-            )
-            if cur.rowcount != 1:
+            if afectadas(ejecutar(cur, "matrix.regla_insertar", **self._rule_values(rule, actor, now))) != 1:
                 return False
             self._insert_children(cur, rule)
             return True
 
     def update_rule(self, rule: BusinessRule, actor: str, now: datetime) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.reglas_negocio SET nombre = ?, descripcion = ?, nivel_alcance = ?, linea_negocio = ?, "
-                "id_empresa = ?, estado = ?, prioridad = ?, fecha_modificacion = ?, modificada_por = ? WHERE id_regla = ?",
-                (rule.name, rule.description, rule.scope.value, rule.business_line, rule.empresa_id,
-                 STATUS_TO_DB[rule.status], rule.priority, now, actor, rule.rule_id),
-            )
-            if cur.rowcount != 1:
+            if afectadas(ejecutar(cur, "matrix.regla_actualizar", **self._rule_values(rule, actor, now))) != 1:
                 return False
-            cur.execute("DELETE FROM dbo.condiciones_regla WHERE id_regla = ?", (rule.rule_id,))
-            cur.execute("DELETE FROM dbo.acciones_regla WHERE id_regla = ?", (rule.rule_id,))
             self._insert_children(cur, rule)
             return True
 
     def set_status(self, rule_id: str, status: RuleStatus, actor: str, now: datetime) -> bool:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.reglas_negocio SET estado = ?, fecha_modificacion = ?, modificada_por = ? WHERE id_regla = ?",
-                (STATUS_TO_DB[status], now, actor, rule_id),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "matrix.regla_cambiar_estado", id_regla=rule_id, estado=STATUS_TO_DB[status],
+                                      ahora=now, actor=actor)) == 1
 
     def record_evaluation(self, record: EvaluationRecord) -> None:
         with self._db.cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.auditoria_evaluacion_reglas (id_regla, nivel_alcance, linea_negocio, id_empresa, "
-                "condiciones_cumplidas, decision, valores_calculados, fecha_evaluacion, evaluada_por, tiempo_ejecucion_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (record.id_regla, record.nivel_alcance, record.linea_negocio, record.id_empresa,
-                 record.condiciones_cumplidas, record.decision,
-                 json.dumps(record.valores_calculados, ensure_ascii=False, default=str),
-                 record.fecha, record.evaluada_por[:100], round(record.tiempo_ejecucion_ms, 2)),
-            )
+            ejecutar(cur, "matrix.evaluacion_insertar", id_regla=record.id_regla, nivel_alcance=record.nivel_alcance,
+                     linea_negocio=record.linea_negocio, id_empresa=record.id_empresa,
+                     condiciones_cumplidas=record.condiciones_cumplidas, decision=record.decision,
+                     valores_calculados=json.dumps(record.valores_calculados, ensure_ascii=False, default=str),
+                     fecha=record.fecha, evaluada_por=record.evaluada_por[:100],
+                     tiempo_ejecucion_ms=round(record.tiempo_ejecucion_ms, 2))
 
     def list_evaluations(self, rule_id: Optional[str], since: datetime, limit: int) -> List[EvaluationRecord]:
-        sql = (
-            "SELECT TOP (?) id_auditoria, id_regla, nivel_alcance, linea_negocio, id_empresa, condiciones_cumplidas, "
-            "decision, valores_calculados, evaluada_por, tiempo_ejecucion_ms, fecha_evaluacion "
-            "FROM dbo.auditoria_evaluacion_reglas WHERE fecha_evaluacion >= ?"
-        )
-        params: List[Any] = [limit, since]
-        if rule_id is not None:
-            sql += " AND id_regla = ?"
-            params.append(rule_id)
         with self._db.cursor() as cur:
-            cur.execute(sql + " ORDER BY id_auditoria DESC", tuple(params))
-            rows = cur.fetchall()
+            rows = ejecutar(cur, "matrix.evaluacion_listar", id_regla=rule_id, desde=since, limite=limit).fetchall()
         records = []
         for r in rows:
             try:

@@ -1,4 +1,7 @@
-"""Catálogo de Nexus sobre PostgreSQL (psycopg2): esquema, funciones/procedimientos, DDL y respaldos con pg_dump."""
+"""Catálogo de Nexus sobre PostgreSQL (psycopg2): esquema, funciones/procedimientos, DDL y respaldos con pg_dump.
+
+acceso-datos: excepcion-administracion (herramienta DBA de Nexus sobre bases destino, con credencial de administrador)
+"""
 
 from __future__ import annotations
 

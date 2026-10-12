@@ -19,6 +19,17 @@ Identidad pública del proyecto. Las clases legacy se mantienen en código por c
 
 Fuente de verdad en código: `src/agents/agent_catalog.py`.
 
+## Acceso a datos: solo procedimientos almacenados
+
+Regla de la fábrica y de todas sus aplicaciones (`.cursor/rules/acceso-datos-procedimientos.mdc`).
+
+- **Kinetix.** Cada agente tiene su esquema de procedimientos en la base kinetix (`sentinel`, `nexus`, `matrix`, `synapse`, `genesis`, `insight`, `aurora`, `prism`, `orbit`, `vector`), definidos en `KINETIX_PROCEDIMIENTOS.sql`. Los repositorios solo llaman `ejecutar(cur, "esquema.procedimiento", ...)` (`src/agents/sqlserver.py`) con el login de `SQLSERVER_APP_USER`, miembro de `kinetix_app_rol`: solo `EXECUTE` sobre esos esquemas, sin `SELECT/INSERT/UPDATE/DELETE` sobre `dbo`.
+- **Aplicaciones.** Nexus genera los procedimientos base de cada tabla en el esquema `app` y el rol de solo `EXECUTE`; Vector genera repositorios que solo llaman `EXEC app.*`.
+- **Excepciones con credencial de administrador** (marcadas con `acceso-datos: excepcion-administracion`): migraciones, scripts de `scripts/` y las herramientas DBA de Nexus sobre bases destino (catálogo, despliegue de migraciones, respaldos y copia entre motores).
+- **Verificación.** `tests/unit/test_acceso_datos_procedimientos.py` pasa el analizador de Vector (`sql_en_linea`) por `src/` y comprueba que cada procedimiento llamado existe en la migración; `scripts/provision_kinetix_app.py` comprueba en la base real que el login no lee ni escribe tablas.
+
+Puesta en marcha: `scripts\apply_sql_migration.py KINETIX_PROCEDIMIENTOS.sql`, luego `scripts\provision_kinetix_app.py --escribir-env` y reiniciar la API.
+
 ## Cortex: cómo orquesta
 
 Cortex es la puerta de entrada de la fábrica. No construye nada por sí mismo:

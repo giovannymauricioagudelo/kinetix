@@ -64,6 +64,7 @@ def load_security_settings() -> SecuritySettings:
 
 
 def load_sqlserver_settings() -> SqlServerSettings:
+    """Credencial de administrador: migraciones y herramientas DBA de Nexus sobre las bases destino."""
     return SqlServerSettings(
         driver=os.getenv("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"),
         host=os.getenv("SQLSERVER_HOST", "localhost"),
@@ -71,3 +72,14 @@ def load_sqlserver_settings() -> SqlServerSettings:
         user=os.getenv("SQLSERVER_USER", "sa"),
         password=os.getenv("SQLSERVER_PASSWORD", ""),
     )
+
+
+def load_app_sqlserver_settings() -> SqlServerSettings:
+    """Credencial de los repositorios de los agentes: login de kinetix_app_rol, que solo ejecuta procedimientos."""
+    admin = load_sqlserver_settings()
+    user = os.getenv("SQLSERVER_APP_USER")
+    if not user:
+        logger.warning("SQLSERVER_APP_USER no definida: los agentes usan la credencial de administrador "
+                       "(ejecuta scripts/provision_kinetix_app.py).")
+        return admin
+    return SqlServerSettings(admin.driver, admin.host, admin.database, user, os.getenv("SQLSERVER_APP_PASSWORD", ""))

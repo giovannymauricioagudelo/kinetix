@@ -3,6 +3,8 @@
 La copia es por tabla y por lotes. Una tabla solo se copia si en el destino está vacía, y en los motores con
 transacciones se confirma de una vez al final, así un fallo deja el destino vacío y se puede reintentar.
 Las bases de origen no se tocan: el cambio se puede revertir.
+
+acceso-datos: excepcion-administracion (copia entre motores de Nexus, con credencial de administrador)
 """
 
 from __future__ import annotations

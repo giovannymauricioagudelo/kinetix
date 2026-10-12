@@ -2,6 +2,8 @@
 Muestra los permisos de los agentes (Nexus, Synapse, Matrix, Sentinel, Argus, Aurora, Vector, Prism, Orbit, Insight, Genesis),
 a qué roles están asignados, qué ve cada usuario y si existen las tablas de la plataforma.
 Uso: venv\\Scripts\\python.exe scripts\\check_agent_permissions.py
+
+acceso-datos: excepcion-administracion (diagnóstico con la credencial de administrador de .env)
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ from typing import Callable, Iterator, Optional
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.agents.security_agent.config import load_security_settings, load_sqlserver_settings
+from src.agents.security_agent.config import load_app_sqlserver_settings, load_security_settings
 from src.agents.security_agent.models import (
     AuthenticationError,
     ConflictError,
@@ -39,7 +39,7 @@ def build_default_service() -> SecurityService:
     else:
         from src.agents.security_agent.sqlserver_repository import SqlServerSecurityRepository
 
-        repository = SqlServerSecurityRepository(load_sqlserver_settings())
+        repository = SqlServerSecurityRepository(load_app_sqlserver_settings())
     return SecurityService(repository, load_security_settings())
 
 

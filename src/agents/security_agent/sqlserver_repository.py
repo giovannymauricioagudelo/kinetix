@@ -1,8 +1,8 @@
 """
-Persistencia de Sentinel en SQL Server (base kinetix).
+Persistencia de Sentinel en SQL Server (base kinetix) mediante los procedimientos del esquema sentinel.
 
-Las bases existentes no comparten todas las columnas opcionales (p. ej. roles.estado,
-fichas_acceso.ficha_hash, usuarios_roles.expira_en), así que se detectan al usarlas.
+KINETIX_PROCEDIMIENTOS.sql agrega las columnas opcionales de bases antiguas (roles.estado, fichas_acceso.ficha_hash,
+usuarios.actualizado_en...), así que los procedimientos usan siempre el mismo esquema.
 """
 
 from __future__ import annotations
@@ -10,13 +10,14 @@ from __future__ import annotations
 import hashlib
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 import pyodbc
 
 from src.agents.security_agent.config import SqlServerSettings
 from src.agents.security_agent.models import AuditEntry, AuditResult, MfaRecord, User
 from src.agents.security_agent.repository import SESSION_STARTED, SecurityRepository
+from src.agents.sqlserver import afectadas, ejecutar
 
 
 def _token_hash(jti: str, kind: str) -> str:
@@ -26,7 +27,6 @@ def _token_hash(jti: str, kind: str) -> str:
 class SqlServerSecurityRepository(SecurityRepository):
     def __init__(self, settings: SqlServerSettings) -> None:
         self._connection_string = settings.connection_string()
-        self._columns: Dict[Tuple[str, str], bool] = {}
 
     @contextmanager
     def _cursor(self, commit: bool = False) -> Iterator[pyodbc.Cursor]:
@@ -43,126 +43,53 @@ class SqlServerSecurityRepository(SecurityRepository):
         with self._cursor() as cur:
             cur.execute("SELECT 1")
 
-    def _has_column(self, table: str, column: str) -> bool:
-        key = (table, column)
-        if key not in self._columns:
-            with self._cursor() as cur:
-                cur.execute("SELECT COL_LENGTH(?, ?)", (f"dbo.{table}", column))
-                self._columns[key] = cur.fetchone()[0] is not None
-        return self._columns[key]
-
     # ---- usuarios
     def _user_from_row(self, row) -> Optional[User]:
         return User(row[0], row[1], row[2], row[3], row[4] or "activo") if row else None
 
     def get_user(self, nombre_usuario: str, id_empresa: str) -> Optional[User]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT id, nombre_usuario, id_empresa, hash_contrasena, estado FROM dbo.usuarios "
-                "WHERE nombre_usuario = ? AND id_empresa = ?",
-                (nombre_usuario, id_empresa),
-            )
+            ejecutar(cur, "sentinel.usuario_por_nombre", nombre_usuario=nombre_usuario, id_empresa=id_empresa)
             return self._user_from_row(cur.fetchone())
 
     def get_user_by_id(self, id_usuario: str) -> Optional[User]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT id, nombre_usuario, id_empresa, hash_contrasena, estado FROM dbo.usuarios WHERE id = ?",
-                (id_usuario,),
-            )
+            ejecutar(cur, "sentinel.usuario_obtener", id_usuario=id_usuario)
             return self._user_from_row(cur.fetchone())
 
     def count_users_with_mfa(self, id_empresa: str) -> Tuple[int, int]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*), SUM(CASE WHEN m.habilitado = 1 THEN 1 ELSE 0 END) "
-                "FROM dbo.usuarios u LEFT JOIN dbo.mfa_secrets m ON m.id_usuario = u.id "
-                "WHERE u.id_empresa = ? AND COALESCE(u.estado, 'activo') = 'activo'",
-                (id_empresa,),
-            )
-            row = cur.fetchone()
+            row = ejecutar(cur, "sentinel.usuarios_mfa_contar", id_empresa=id_empresa).fetchone()
             return int(row[0] or 0), int(row[1] or 0)
 
     # ---- MFA
     def get_mfa(self, id_usuario: str) -> Optional[MfaRecord]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT id_usuario, secret_totp, habilitado, ultimo_paso_totp FROM dbo.mfa_secrets WHERE id_usuario = ?",
-                (id_usuario,),
-            )
-            row = cur.fetchone()
+            row = ejecutar(cur, "sentinel.mfa_obtener", id_usuario=id_usuario).fetchone()
             return MfaRecord(row[0], row[1], bool(row[2]), row[3]) if row else None
 
     def save_pending_mfa(self, id_usuario: str, secret: str, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                """
-                MERGE dbo.mfa_secrets AS target
-                USING (SELECT ? AS id_usuario) AS source ON target.id_usuario = source.id_usuario
-                WHEN MATCHED AND COALESCE(target.habilitado, 0) = 0 THEN
-                    UPDATE SET secret_totp = ?, ultimo_paso_totp = NULL, fecha_creacion = ?, fecha_confirmacion = NULL
-                WHEN NOT MATCHED THEN
-                    INSERT (id_usuario, secret_totp, habilitado, fecha_creacion) VALUES (?, ?, 0, ?);
-                """,
-                (id_usuario, secret, now, id_usuario, secret, now),
-            )
+            ejecutar(cur, "sentinel.mfa_guardar_pendiente", id_usuario=id_usuario, secreto=secret, ahora=now)
 
     def enable_mfa(self, id_usuario: str, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.mfa_secrets SET habilitado = 1, fecha_confirmacion = ? WHERE id_usuario = ?",
-                (now, id_usuario),
-            )
-            self._set_user_mfa_flag(cur, id_usuario, True, now)
+            ejecutar(cur, "sentinel.mfa_cambiar", id_usuario=id_usuario, habilitado=True, ahora=now)
 
     def disable_mfa(self, id_usuario: str, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.mfa_secrets SET habilitado = 0, fecha_deshabilitacion = ? WHERE id_usuario = ?",
-                (now, id_usuario),
-            )
-            self._set_user_mfa_flag(cur, id_usuario, False, now)
-
-    def _set_user_mfa_flag(self, cur: pyodbc.Cursor, id_usuario: str, enabled: bool, now: datetime) -> None:
-        if not self._has_column("usuarios", "mfa_habilitado"):
-            return
-        if self._has_column("usuarios", "actualizado_en"):
-            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = ?, actualizado_en = ? WHERE id = ?", (enabled, now, id_usuario))
-        else:
-            cur.execute("UPDATE dbo.usuarios SET mfa_habilitado = ? WHERE id = ?", (enabled, id_usuario))
+            ejecutar(cur, "sentinel.mfa_cambiar", id_usuario=id_usuario, habilitado=False, ahora=now)
 
     def claim_totp_step(self, id_usuario: str, step: int) -> bool:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "UPDATE dbo.mfa_secrets SET ultimo_paso_totp = ? "
-                "WHERE id_usuario = ? AND (ultimo_paso_totp IS NULL OR ultimo_paso_totp < ?)",
-                (step, id_usuario, step),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "sentinel.mfa_reclamar_paso", id_usuario=id_usuario, paso=step)) == 1
 
     # ---- fichas
-    def _insert_token(self, cur: pyodbc.Cursor, jti: str, id_usuario: str, kind: str, expira: datetime,
+    @staticmethod
+    def _insert_token(cur: pyodbc.Cursor, jti: str, id_usuario: str, kind: str, expira: datetime,
                       revoked_at: Optional[datetime]) -> None:
-        columns = ["id", "id_usuario", "tipo_ficha", "expira_en", "revocada"]
-        values: list = [jti, id_usuario, kind, expira, revoked_at is not None]
-        if self._has_column("fichas_acceso", "ficha_hash"):
-            columns.append("ficha_hash")
-            values.append(_token_hash(jti, kind))
-        if revoked_at is not None and self._has_column("fichas_acceso", "revocada_en"):
-            columns.append("revocada_en")
-            values.append(revoked_at)
-        placeholders = ", ".join("?" for _ in columns)
-        cur.execute(
-            f"INSERT INTO dbo.fichas_acceso ({', '.join(columns)}) SELECT {placeholders} "
-            "WHERE NOT EXISTS (SELECT 1 FROM dbo.fichas_acceso WHERE id = ?)",
-            (*values, jti),
-        )
-
-    def _revocation_set(self) -> str:
-        return "revocada = 1, revocada_en = ?" if self._has_column("fichas_acceso", "revocada_en") else "revocada = 1"
-
-    def _revocation_params(self, now: datetime) -> tuple:
-        return (now,) if self._has_column("fichas_acceso", "revocada_en") else ()
+        ejecutar(cur, "sentinel.ficha_insertar", id=jti, id_usuario=id_usuario, tipo_ficha=kind, expira_en=expira,
+                 ficha_hash=_token_hash(jti, kind), revocada_en=revoked_at)
 
     def store_refresh_token(self, jti: str, id_usuario: str, expira: datetime) -> None:
         with self._cursor(commit=True) as cur:
@@ -170,30 +97,16 @@ class SqlServerSecurityRepository(SecurityRepository):
 
     def get_refresh_token(self, jti: str) -> Optional[Tuple[str, bool]]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT id_usuario, revocada FROM dbo.fichas_acceso WHERE id = ? AND tipo_ficha = 'Refresh'",
-                (jti,),
-            )
-            row = cur.fetchone()
+            row = ejecutar(cur, "sentinel.ficha_refresco_obtener", id=jti).fetchone()
             return (row[0], bool(row[1])) if row else None
 
     def revoke_refresh_token(self, jti: str, now: datetime) -> bool:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                f"UPDATE dbo.fichas_acceso SET {self._revocation_set()} "
-                "WHERE id = ? AND tipo_ficha = 'Refresh' AND COALESCE(revocada, 0) = 0",
-                (*self._revocation_params(now), jti),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "sentinel.ficha_refresco_revocar", id=jti, ahora=now)) == 1
 
     def revoke_all_refresh_tokens(self, id_usuario: str, now: datetime) -> int:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                f"UPDATE dbo.fichas_acceso SET {self._revocation_set()} "
-                "WHERE id_usuario = ? AND tipo_ficha = 'Refresh' AND COALESCE(revocada, 0) = 0",
-                (*self._revocation_params(now), id_usuario),
-            )
-            return cur.rowcount
+            return afectadas(ejecutar(cur, "sentinel.fichas_refresco_revocar_usuario", id_usuario=id_usuario, ahora=now))
 
     def revoke_access_token(self, jti: str, id_usuario: str, expira: datetime, now: datetime) -> None:
         with self._cursor(commit=True) as cur:
@@ -201,27 +114,12 @@ class SqlServerSecurityRepository(SecurityRepository):
 
     def is_access_token_revoked(self, jti: str) -> bool:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM dbo.fichas_acceso WHERE id = ? AND tipo_ficha = 'Bearer' AND revocada = 1",
-                (jti,),
-            )
-            return cur.fetchone() is not None
+            return ejecutar(cur, "sentinel.ficha_acceso_revocada", id=jti).fetchone() is not None
 
     # ---- RBAC
-    def _active_role_filter(self, alias: str) -> str:
-        return f" AND COALESCE({alias}.estado, 'activo') = 'activo'" if self._has_column("roles", "estado") else ""
-
     def get_roles_and_permissions(self, id_usuario: str) -> Tuple[List[str], List[str]]:
-        expiry = " AND (ur.expira_en IS NULL OR ur.expira_en > GETUTCDATE())" if self._has_column("usuarios_roles", "expira_en") else ""
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT r.id, p.recurso, p.accion FROM dbo.usuarios_roles ur "
-                f"JOIN dbo.roles r ON r.id = ur.id_rol{self._active_role_filter('r')} "
-                "LEFT JOIN dbo.roles_permisos rp ON rp.id_rol = r.id "
-                "LEFT JOIN dbo.permisos p ON p.id = rp.id_permiso "
-                f"WHERE ur.id_usuario = ?{expiry}",
-                (id_usuario,),
-            )
+            ejecutar(cur, "sentinel.roles_y_permisos", id_usuario=id_usuario)
             roles, permisos = set(), set()
             for role_id, recurso, accion in cur.fetchall():
                 roles.add(role_id)
@@ -231,86 +129,44 @@ class SqlServerSecurityRepository(SecurityRepository):
 
     def get_role_tenant(self, id_rol: str) -> Optional[str]:
         with self._cursor() as cur:
-            cur.execute(f"SELECT id_empresa FROM dbo.roles r WHERE r.id = ?{self._active_role_filter('r')}", (id_rol,))
-            row = cur.fetchone()
+            row = ejecutar(cur, "sentinel.rol_empresa", id_rol=id_rol).fetchone()
             return row[0] if row else None
 
     def permission_exists(self, id_permiso: str) -> bool:
         with self._cursor() as cur:
-            cur.execute("SELECT 1 FROM dbo.permisos WHERE id = ?", (id_permiso,))
-            return cur.fetchone() is not None
+            return ejecutar(cur, "sentinel.permiso_existe", id_permiso=id_permiso).fetchone() is not None
 
     def assign_role(self, id_usuario: str, id_rol: str) -> bool:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.usuarios_roles (id_usuario, id_rol) SELECT ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.usuarios_roles WHERE id_usuario = ? AND id_rol = ?)",
-                (id_usuario, id_rol, id_usuario, id_rol),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "sentinel.rol_asignar", id_usuario=id_usuario, id_rol=id_rol)) == 1
 
     def grant_permission(self, id_rol: str, id_permiso: str) -> bool:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.roles_permisos (id_rol, id_permiso) SELECT ?, ? "
-                "WHERE NOT EXISTS (SELECT 1 FROM dbo.roles_permisos WHERE id_rol = ? AND id_permiso = ?)",
-                (id_rol, id_permiso, id_rol, id_permiso),
-            )
-            return cur.rowcount == 1
+            return afectadas(ejecutar(cur, "sentinel.permiso_conceder", id_rol=id_rol, id_permiso=id_permiso)) == 1
 
     # ---- auditoría
     def add_audit(self, entry: AuditEntry) -> None:
         with self._cursor(commit=True) as cur:
-            cur.execute(
-                "INSERT INTO dbo.bitacora_auditoria "
-                "(id_usuario, id_empresa, accion, recurso, resultado, detalles, fecha_auditoria, direccion_ip) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (entry.id_usuario, entry.id_empresa, entry.accion, entry.recurso, entry.resultado,
-                 entry.detalles, entry.fecha, entry.direccion_ip),
-            )
+            ejecutar(cur, "sentinel.auditoria_insertar", id_usuario=entry.id_usuario, id_empresa=entry.id_empresa,
+                     accion=entry.accion, recurso=entry.recurso, resultado=entry.resultado, detalles=entry.detalles,
+                     fecha=entry.fecha, direccion_ip=entry.direccion_ip)
 
     def login_failures_since(self, recurso: str, since: datetime) -> List[datetime]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT fecha_auditoria FROM dbo.bitacora_auditoria "
-                "WHERE recurso = ? AND resultado = ? AND fecha_auditoria > ? "
-                "AND id > COALESCE((SELECT MAX(id) FROM dbo.bitacora_auditoria "
-                "  WHERE recurso = ? AND accion = ? AND resultado = ?), 0) "
-                "ORDER BY fecha_auditoria",
-                (recurso, AuditResult.BAD_CREDENTIALS, since, recurso, SESSION_STARTED, AuditResult.SUCCESS),
-            )
+            ejecutar(cur, "sentinel.auditoria_fallos_acceso", recurso=recurso, resultado_fallo=AuditResult.BAD_CREDENTIALS,
+                     desde=since, accion_sesion=SESSION_STARTED, resultado_exito=AuditResult.SUCCESS)
             return [row[0] for row in cur.fetchall()]
 
     def list_audit(self, id_empresa, desde, hasta, accion, id_usuario, resultado, limit, offset):
-        clauses, params = ["id_empresa = ?"], [id_empresa]
-        for column, operator, value in (
-            ("fecha_auditoria", ">=", desde),
-            ("fecha_auditoria", "<=", hasta),
-            ("accion", "=", accion),
-            ("id_usuario", "=", id_usuario),
-            ("resultado", "=", resultado),
-        ):
-            if value is not None:
-                clauses.append(f"{column} {operator} ?")
-                params.append(value)
-        where = " AND ".join(clauses)
         with self._cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM dbo.bitacora_auditoria WHERE {where}", params)
+            ejecutar(cur, "sentinel.auditoria_listar", id_empresa=id_empresa, desde=desde, hasta=hasta, accion=accion,
+                     id_usuario=id_usuario, resultado=resultado, limite=limit, desplazamiento=offset)
             total = int(cur.fetchone()[0])
-            cur.execute(
-                "SELECT id_empresa, accion, resultado, id_usuario, recurso, detalles, direccion_ip, fecha_auditoria "
-                f"FROM dbo.bitacora_auditoria WHERE {where} "
-                "ORDER BY fecha_auditoria DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
-                [*params, offset, limit],
-            )
+            cur.nextset()
             entries = [AuditEntry(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in cur.fetchall()]
         return total, entries
 
     def audit_summary(self, id_empresa: str, desde: datetime) -> List[Tuple[str, str, int]]:
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT accion, resultado, COUNT(*) FROM dbo.bitacora_auditoria "
-                "WHERE id_empresa = ? AND fecha_auditoria >= ? GROUP BY accion, resultado ORDER BY accion, resultado",
-                (id_empresa, desde),
-            )
+            ejecutar(cur, "sentinel.auditoria_resumen", id_empresa=id_empresa, desde=desde)
             return [(r[0], r[1], int(r[2])) for r in cur.fetchall()]
