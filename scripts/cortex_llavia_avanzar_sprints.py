@@ -48,6 +48,16 @@ NOTAS_SPRINTS = {
         "tablero en cache 5 min con recalculo en segundo plano. Prism prueba_carga multiproceso, Argus /metricas, "
         "verificar_cumplimiento 15/15, 276 pruebas, cobertura 91.8%, docs/rendimiento.md. Push a2bc328 en llavia."
     ),
+    9: (
+        "Piloto interno en la red local: Nexus por entornos (llavia_piloto v106, empresas plataforma y piloto, "
+        "login llavia_piloto_app solo EXECUTE). Orbit piloto.py con releases inmutables, compuerta de pruebas, "
+        "respaldo verificado, humo 11/11 y reversion con restauracion de base probada (7.1 s); release oficial "
+        "20261012-184153-482d31b en https :8443 (corte 5.0 s). Sentinel: 4 participantes con roles, TOTP para "
+        "administrador. Argus: disponibilidad, errores y uso por persona. Solicitud con interesado inexistente "
+        "404, CI verde, 296 pruebas, cobertura 92.02%, docs/piloto.md y piloto_aceptacion.md. Aprobado por "
+        "giovanny el 12/10/2026; los escenarios de aceptacion siguen en uso continuo. Push 482d31b en llavia y "
+        "7299675 en kinetix."
+    ),
 }
 
 
