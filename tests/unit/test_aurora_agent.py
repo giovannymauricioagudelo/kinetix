@@ -104,6 +104,8 @@ def test_exports_layouts_and_screens(aurora):
     ("form", ("data-kx-validate", "<fieldset>", "kx-actionbar", 'id="kx-discard"')),
     ("detail", ('role="tablist"', 'role="tabpanel"', "kx-timeline")),
     ("settings", ('role="switch"', 'id="s-idioma"')),
+    ("permissions", ('id="p-rol"', 'aria-label="Panel: Acceder"', 'id="p-motivo"', 'id="kx-revoke"', "Restricción",
+                     "(rol + concesiones) − restricciones")),
 ])
 def test_screens_use_the_app_shell_and_add_functionality(aurora, tipo, esperado):
     sid = aurora.create_system("ana", "gio", {"nombre": f"S-{tipo}"})["id_sistema"]
@@ -137,6 +139,17 @@ def test_screen_options_customize_entity_fields_and_companies(aurora):
                 {"campos": [{"nombre": "x", "tipo": "archivo"}]}, {"multiempresa": "si"}):
         with pytest.raises(InvalidInputError):
             aurora.screen(sid, "gio", "list", "Talleres", "es", bad)
+
+
+def test_menu_shows_only_the_modules_the_user_can_access(aurora):
+    sid = aurora.create_system("ana", "gio", {"nombre": "Menu"})["id_sistema"]
+    options = {"modulos": ["Panel", "Inmuebles", "Reportes", "Permisos"], "modulos_permitidos": ["Panel", "Inmuebles"]}
+    screen = aurora.screen(sid, "gio", "dashboard", "Llavia", "es", options)
+    nav = screen["html"].split('class="kx-nav"', 1)[1].split("</nav>", 1)[0]
+    assert ">Inmuebles<" in nav and ">Reportes<" not in nav and ">Permisos<" not in nav
+    assert screen["opciones_aplicadas"]["modulos_permitidos"] == ["Panel", "Inmuebles"]
+    with pytest.raises(InvalidInputError):
+        aurora.screen(sid, "gio", "dashboard", "Llavia", "es", {**options, "modulos_permitidos": ["Otro"]})
 
 
 def test_screens_are_translated(aurora):

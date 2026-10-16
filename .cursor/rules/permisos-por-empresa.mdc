@@ -1,0 +1,60 @@
+---
+description: Permisos por empresa, rol y usuario (concesión o restricción) sobre cada opción y evento, con menú filtrado, historial y auditoría en la fábrica y todas sus aplicaciones
+alwaysApply: true
+---
+
+# Permisos por empresa, rol y usuario
+
+Regla obligatoria para **toda aplicación generada por la fábrica** (Llavia y las siguientes). Cada opción de la aplicación y cada evento sobre ella (entrar, consultar, ingresar, actualizar, borrar, enviar…) se autoriza con permisos que se administran **por empresa**, se definen **por rol** y se ajustan **por usuario**.
+
+## Modelo
+
+- **Opción** (`opcion_aplicacion`): pantalla o módulo con código, nombre, ruta, ícono, orden y opción padre; arma el menú.
+- **Evento** (`evento_permiso`): catálogo estándar `acceder` (ver la opción en el menú y entrar), `consultar`, `ingresar`, `actualizar`, `borrar`, `enviar`, `aprobar`, `anular`, `exportar`, `imprimir`, `publicar`. Cada aplicación agrega los suyos.
+- **Opción + evento** (`opcion_evento`): qué eventos aplican a cada opción y cuáles exigen MFA reciente.
+- **Rol** (`rol`, por empresa): roles de sistema sembrados desde el catálogo de la aplicación (`es_sistema`) y roles propios creados por la empresa a partir de uno de ellos (`rol_base`). Un usuario tiene un rol (`usuario_rol`).
+- **Permiso del rol** (`permiso_rol`): opción + evento + alcance.
+- **Permiso del usuario** (`permiso_usuario`): `concesion` (algo que su rol no tiene) o `restriccion` (algo que su rol sí tiene), con motivo y vigencia opcional.
+- **Historial** (`historial_permiso`): cada concesión, revocación, asignación de rol y sincronización del catálogo; inalterable.
+
+## Regla de conflicto (rol + usuario nunca chocan)
+
+- Permiso efectivo = (permisos del rol + concesiones vigentes) − restricciones vigentes; sin `acceder` sobre una opción, sus demás eventos no cuentan.
+- La base rechaza lo **redundante** (conceder lo que el rol ya da) y lo **contradictorio** (restringir lo que el rol no da), y admite una sola entrada vigente por usuario, opción y evento.
+- Cuando cambia el rol del usuario o los permisos del rol, las entradas del usuario que pierden sentido se revocan solas (`revocado_automatico`) y quedan en el historial. Las vencidas pasan a `vencido`.
+- Nadie se queda sin administrar permisos: los roles de sistema no pierden la opción `permisos` y un usuario no se restringe a sí mismo esa opción.
+
+## Base de datos (Nexus)
+
+- Nexus agrega la plantilla de permisos a toda aplicación al registrarla (`permisos_por_empresa`, en multiempresa con `id_empresa` y seguridad por fila) y la adjunta a las ya registradas con `POST /api/v1/nexus/aplicaciones/{id}/permisos`.
+- Procedimientos `app.permisos_*` (SQL Server; acceso solo por procedimientos): `sincronizar` (catálogo y roles de sistema, idempotente), `efectivos`, `catalogo_listar`, `rol_*`, `usuario_*`, `historial_listar`, `conciliar`. Errores propios en el rango 52001–52099.
+- La aplicación guarda su catálogo (opciones, eventos y roles de sistema) en `security/permisos_catalogo.json` y lo sincroniza en cada empresa con `app.permisos_sincronizar`; las revocaciones explícitas de la empresa se respetan.
+
+## API (Vector y Sentinel)
+
+- Cada ruta exige `requiere(opcion, evento)` con el permiso efectivo del usuario en la empresa activa (o un router creado con `dependencies=[Depends(requiere(...))]`). Las excepciones se marcan en la línea anterior al decorador: `# permisos: publico` (salud, login, registro, webhooks firmados) o `# permisos: autenticado` (solo sesión válida: perfil propio, elegir empresa, permisos efectivos, MFA).
+- Endpoints de administración: catálogo, roles (crear, renombrar, desactivar), matriz del rol (conceder, revocar), rol del usuario, concesiones y restricciones del usuario, permisos efectivos y historial. Los cambios exigen MFA reciente y quedan en la auditoría de la aplicación además del historial.
+- `GET .../permisos/efectivos` devuelve las opciones de menú y los eventos permitidos del usuario.
+
+## Interfaz (Aurora)
+
+- El menú se arma con las opciones donde el usuario tiene `acceder`; botones y acciones se muestran según los eventos permitidos (la API valida igual).
+- Pantalla **Permisos** con tres vistas: por rol (matriz opción × evento), por usuario (rol, concesiones, restricciones y vista combinada con el origen de cada permiso) e historial de asignaciones y revocaciones.
+
+## Opciones nuevas: el esquema completo, siempre
+
+Toda opción nueva (pantalla, módulo, reporte, integración con interfaz o acción de API) de cualquier aplicación nace con el esquema de permisos completo; no se entrega ni se cierra un sprint sin esto:
+
+1. **Catálogo:** se declara en `security/permisos_catalogo.json` con código, nombre, ruta, ícono, orden y padre, el evento `acceder` y los eventos que aplican (los nuevos se agregan a `eventos`), y cuáles exigen MFA.
+2. **Roles:** se asigna a los roles de sistema que la usan (al menos uno con `acceder`); los roles propios de cada empresa la reciben por administración, nunca por defecto.
+3. **Base:** se sincroniza en cada empresa con `app.permisos_sincronizar` al desplegar; el historial registra la opción nueva.
+4. **API:** cada ruta de la opción exige `requiere(opcion, evento)` con el evento que corresponde a la acción (consultar, ingresar, actualizar, borrar, enviar…); los cambios sensibles piden MFA reciente y quedan en la auditoría.
+5. **Interfaz:** la opción entra al menú solo con `acceder` y cada botón o acción se muestra según su evento; aparece en la matriz de la pantalla Permisos.
+6. **Pruebas:** la opción está en el catálogo, sus rutas exigen permiso, sin `acceder` no aparece y una restricción de usuario la bloquea.
+
+Vector lo verifica en repositorios de aplicaciones: `catalogo_permisos` (opción sin `acceder`, eventos no declarados, opción sin rol, catálogo ausente) y `permiso_fuera_de_catalogo` (`requiere` con una opción o evento que no están en el catálogo), además de `ruta_sin_permiso`.
+
+## Verificación (Prism)
+
+- Prueba que toda ruta de la API declare permiso o esté marcada (regla `ruta_sin_permiso` de Vector, crítica; se activa en repositorios con `kinetix.json`).
+- Pruebas de la regla de conflicto (redundante, contradictoria, revocación automática) y del menú filtrado.

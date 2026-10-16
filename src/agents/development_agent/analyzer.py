@@ -6,9 +6,10 @@ patrones inseguros (OWASP) y mantenibilidad. No ejecuta el código analizado.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 SEVERITIES = ("critica", "alta", "media", "baja")
 WEIGHTS = {"critica": 2.5, "alta": 1.0, "media": 0.3, "baja": 0.05}
@@ -31,6 +32,15 @@ _DATA_SQL = re.compile(r"(?is)(?<!ON\s)(?<!FOR\s)(?<!AFTER\s)(?<!OF\s)(?<!,\s)\b
                        r"|DELETE\s+(FROM\s+)?[\w.\[\]]+|MERGE\s+(INTO\s+)?[\w.\[\]]+|SELECT\b.*?\bFROM\b)")
 # Archivos fuera del código de la aplicación que operan como administrador (ver acceso-datos-procedimientos.mdc).
 DATA_ACCESS_EXCEPTION = "acceso-datos: excepcion-administracion"
+# Rutas de FastAPI sin permiso de opción y evento (permisos-por-empresa.mdc); las públicas o solo autenticadas se marcan.
+_ROUTE_METHODS = {"get", "post", "put", "patch", "delete", "api_route", "websocket"}
+_PERMISSION_DEPENDENCY = re.compile(r"(?i)(requiere|require_permission|permiso|^_?can_)")
+_ROUTE_MARK = re.compile(r"#\s*permisos:\s*(publico|autenticado)\b")
+# Toda opción nueva aplica el esquema completo: catálogo con 'acceder', eventos declarados y al menos un rol.
+PERMISSIONS_CATALOG = "security/permisos_catalogo.json"
+ACCESS_EVENT = "acceder"
+ADMIN_OPTION = "permisos"
+_REQUIRE_CALLS = ("requiere", "require_permission")
 
 
 @dataclass(frozen=True)
@@ -147,12 +157,74 @@ def _nesting(node: ast.AST, depth: int = 0) -> int:
     return deepest
 
 
+def _permission_names(node: ast.AST) -> Iterable[str]:
+    """Nombres de las dependencias dentro de Depends(...) / Security(...) en un nodo."""
+    for call in ast.walk(node):
+        if isinstance(call, ast.Call) and _dotted(call.func).rsplit(".", 1)[-1] in ("Depends", "Security") and call.args:
+            target = call.args[0]
+            yield _dotted(target.func if isinstance(target, ast.Call) else target).rsplit(".", 1)[-1]
+
+
+def _has_permission(node: ast.AST) -> bool:
+    return any(_PERMISSION_DEPENDENCY.search(name) for name in _permission_names(node))
+
+
+def _protected_routers(tree: ast.Module) -> set:
+    """Routers creados con dependencies=[Depends(permiso)]: todas sus rutas quedan protegidas."""
+    names = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call) and _dotted(stmt.value.func).endswith("APIRouter"):
+            dependencies = _keyword(stmt.value, "dependencies")
+            if dependencies is not None and _has_permission(dependencies):
+                names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+    return names
+
+
+Catalog = Dict[str, FrozenSet[str]]
+
+
+def permissions_catalog(text: Optional[str]) -> Tuple[Optional[Catalog], List[Finding]]:
+    """Opciones del catálogo con sus eventos y los hallazgos de opciones que no aplican el esquema completo."""
+    def finding(message: str, severity: str = "critica") -> Finding:
+        return Finding(PERMISSIONS_CATALOG, 0, "catalogo_permisos", "seguridad", severity, message)
+
+    if text is None:
+        return None, [finding(f"Falta {PERMISSIONS_CATALOG}: cada opción se declara allí con sus eventos y roles")]
+    try:
+        data = json.loads(text)
+        events = {e["codigo"] for e in data["eventos"]}
+        options = {o["codigo"]: frozenset(o["eventos"]) for o in data["opciones"]}
+        grants = {(p["opcion"], p["evento"]) for r in data["roles"] for p in r["permisos"]}
+    except (ValueError, KeyError, TypeError) as e:
+        return None, [finding(f"{PERMISSIONS_CATALOG} no tiene la estructura eventos/opciones/roles: {e}")]
+    findings = []
+    if ADMIN_OPTION not in options:
+        findings.append(finding(f"Falta la opción '{ADMIN_OPTION}': la empresa no podría administrar sus permisos"))
+    for code, option_events in sorted(options.items()):
+        if ACCESS_EVENT not in option_events:
+            findings.append(finding(f"Opción '{code}' sin el evento '{ACCESS_EVENT}': no puede entrar al menú por permisos"))
+        for event in sorted(option_events - events):
+            findings.append(finding(f"Opción '{code}': el evento '{event}' no está declarado en 'eventos'"))
+        if (code, ACCESS_EVENT) not in grants:
+            findings.append(finding(f"Opción '{code}' sin rol de sistema que la acceda: nadie la vería hasta asignarla",
+                                    "alta"))
+    for option, event in sorted(grants):
+        if event not in options.get(option, ()):
+            findings.append(finding(f"Un rol concede '{option}.{event}', que no está en el catálogo"))
+    return options, findings
+
+
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, path: str, is_test: bool, admin_exception: bool = False, constants: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, path: str, is_test: bool, admin_exception: bool = False, constants: Optional[Dict[str, str]] = None,
+                 lines: Optional[List[str]] = None, protected_routers: Optional[set] = None,
+                 catalog: Optional[Catalog] = None) -> None:
         self.path = path
         self.is_test = is_test
         self.admin_exception = admin_exception
         self.constants = constants or {}
+        self.lines = lines
+        self.protected_routers = protected_routers or set()
+        self.catalog = catalog
         self.findings: List[Finding] = []
         self.functions: List[FunctionMetrics] = []
         self.classes = 0
@@ -185,7 +257,25 @@ class _Visitor(ast.NodeVisitor):
             self.add(node, "demasiados_parametros", "mantenibilidad", "baja", f"{node.name}: {params} parámetros (> {MAX_PARAMS})")
         if not self.is_test and not node.name.startswith("_") and length > 15 and ast.get_docstring(node) is None:
             self.add(node, "sin_docstring", "mantenibilidad", "baja", f"{node.name}: función pública de {length} líneas sin docstring")
+        self._route_permission(node)
         self.generic_visit(node)
+
+    def _route_permission(self, node) -> None:
+        routes = [d for d in node.decorator_list if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                  and d.func.attr in _ROUTE_METHODS]
+        if self.lines is None or self.is_test or not routes:
+            return
+        if any(_dotted(d.func.value) in self.protected_routers or _has_permission(d) for d in routes):
+            return
+        if _has_permission(node.args):
+            return
+        first = min(d.lineno for d in node.decorator_list)
+        header = self.lines[max(first - 2, 0):node.body[0].lineno - 1]
+        if any(_ROUTE_MARK.search(line) for line in header):
+            return
+        self.add(node, "ruta_sin_permiso", "seguridad", "critica",
+                 f"{node.name}: ruta sin permiso de opción y evento; usa Depends(requiere(opcion, evento)) o marca "
+                 "'# permisos: publico' / '# permisos: autenticado' (OWASP A01)")
 
     visit_FunctionDef = _function
     visit_AsyncFunctionDef = _function
@@ -247,11 +337,22 @@ class _Visitor(ast.NodeVisitor):
             self.add(node, "sql_en_linea", "seguridad", "critica",
                      "Acceso a datos con SQL en línea: llama un procedimiento almacenado (EXEC app.…) con parámetros")
 
+    def _catalog_permission(self, node: ast.Call, name: str) -> None:
+        if self.catalog is None or self.is_test or name.rsplit(".", 1)[-1] not in _REQUIRE_CALLS or len(node.args) < 2:
+            return
+        option, event = (a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None for a in node.args[:2])
+        if option is None or event is None or event in self.catalog.get(option, ()):
+            return
+        self.add(node, "permiso_fuera_de_catalogo", "seguridad", "critica",
+                 f"{name}('{option}', '{event}'): la opción o el evento no están en {PERMISSIONS_CATALOG}; "
+                 "declara la opción con sus eventos y asígnala a los roles")
+
     def visit_Call(self, node: ast.Call) -> None:
         name = _dotted(node.func)
         self._dangerous_call(node, name)
         self._network_call(node, name)
         self._sql_call(node, name)
+        self._catalog_permission(node, name)
         self.generic_visit(node)
 
     def _secret_assignment(self, node: ast.AST, target: ast.expr, value: Optional[ast.expr]) -> None:
@@ -301,7 +402,10 @@ def _code_lines(source: str) -> int:
     return sum(1 for line in source.splitlines() if line.strip() and not line.strip().startswith("#"))
 
 
-def analyze_source(path: str, source: str) -> Tuple[List[Finding], List[FunctionMetrics], Dict[str, int], Optional[str]]:
+def analyze_source(path: str, source: str, exigir_permisos: bool = False, catalog: Optional[Catalog] = None
+                   ) -> Tuple[List[Finding], List[FunctionMetrics], Dict[str, int], Optional[str]]:
+    """Con exigir_permisos (repositorios de aplicaciones, con kinetix.json) toda ruta debe declarar su permiso y,
+    con catalog, cada requiere(opcion, evento) debe existir en el catálogo de permisos."""
     is_test = "/tests/" in f"/{path}" or path.rsplit("/", 1)[-1].startswith("test_")
     source = source.lstrip("\ufeff")
     try:
@@ -315,7 +419,8 @@ def analyze_source(path: str, source: str) -> Tuple[List[Finding], List[Function
         and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
         for target in stmt.targets if isinstance(target, ast.Name)
     }
-    visitor = _Visitor(path, is_test, DATA_ACCESS_EXCEPTION in source, constants)
+    visitor = _Visitor(path, is_test, DATA_ACCESS_EXCEPTION in source, constants,
+                       source.splitlines() if exigir_permisos else None, _protected_routers(tree), catalog)
     visitor.visit(tree)
     for number, line in enumerate(source.splitlines(), start=1):
         if _TODO.search(line):
@@ -332,13 +437,18 @@ def score(findings: Iterable[Finding], lines: int) -> float:
     return round(max(0.0, 10.0 - min(10.0, penalty)), 2)
 
 
-def analyze_files(sources: Dict[str, str], max_findings: int = 500) -> Dict[str, object]:
+def analyze_files(sources: Dict[str, str], max_findings: int = 500, exigir_permisos: bool = False,
+                  catalogo: Optional[str] = None) -> Dict[str, object]:
+    """Con exigir_permisos, catalogo es el texto de security/permisos_catalogo.json (None si falta)."""
     findings: List[Finding] = []
+    catalog: Optional[Catalog] = None
+    if exigir_permisos:
+        catalog, findings = permissions_catalog(catalogo)
     functions: List[FunctionMetrics] = []
     lines = classes = 0
     syntax_errors = []
     for path, source in sources.items():
-        file_findings, file_functions, stats, error = analyze_source(path, source)
+        file_findings, file_functions, stats, error = analyze_source(path, source, exigir_permisos, catalog)
         findings += file_findings
         functions += file_functions
         lines += stats["lineas"]

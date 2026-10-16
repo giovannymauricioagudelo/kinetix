@@ -36,7 +36,9 @@ def test_per_company_model_creates_one_database_per_company(nexus, provisioner):
     app = nexus.register_app("ana", "gio", {"id_aplicacion": "talleres", "nombre": "Talleres", "motor": "sqlserver", "modelo_datos": "por_empresa",
                                             "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
     assert [d["nombre_base"] for d in app["bases_datos"]] == ["talleres_acme"]
-    assert app["migraciones"] == [] and app["seguridad_por_fila"] is False
+    assert [m["nombre"] for m in app["migraciones"]] == ["permisos_por_empresa"] and app["seguridad_por_fila"] is False
+    permisos = nexus.migration("gio", "talleres", 1)["script"]
+    assert "app.permisos_efectivos" in permisos and "id_empresa" not in permisos
 
     added = nexus.add_company("ana", "gio", "talleres", {"id_empresa": "beta", "nombre": "Beta"})
     assert added == {"id_empresa": "beta", "nombre": "Beta", "nombre_base": "talleres_beta", "base_nueva": True}
@@ -45,19 +47,19 @@ def test_per_company_model_creates_one_database_per_company(nexus, provisioner):
 
     table = nexus.table("ana", "gio", "talleres", CLIENTES)
     assert "id_empresa" not in table["ddl"] and "SECURITY POLICY" not in table["ddl"]
-    assert "PRIMARY KEY CLUSTERED" in table["ddl"] and table["migracion"]["numero"] == 1
+    assert "PRIMARY KEY CLUSTERED" in table["ddl"] and table["migracion"]["numero"] == 2
 
     deployed = nexus.deploy("ana", "gio", "talleres")
     assert deployed["bases"] == 2 and deployed["fallidas"] == 0
     assert {d["nombre_base"]: d["migraciones_aplicadas"] for d in deployed["despliegues"]} == {
-        "talleres_acme": [1], "talleres_beta": [1]}
+        "talleres_acme": [1, 2], "talleres_beta": [1, 2]}
     assert all(d["base_creada"] for d in deployed["despliegues"])
     assert set(provisioner.databases) == {"talleres_acme", "talleres_beta"}
 
     only_acme = nexus.deploy("ana", "gio", "talleres", "acme")
     assert [d["estado"] for d in only_acme["despliegues"]] == ["sin_cambios"]
     detail = nexus.get_app("gio", "talleres")
-    assert all(d["estado"] == "desplegada" and d["version"] == 1 and d["migraciones_pendientes"] == 0
+    assert all(d["estado"] == "desplegada" and d["version"] == 2 and d["migraciones_pendientes"] == 0
                for d in detail["bases_datos"])
 
 
@@ -66,7 +68,11 @@ def test_multi_company_model_shares_one_database_with_rls(nexus, provisioner):
                                             "id_solicitud": "req-1234abcd",
                                             "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
     assert [d["nombre_base"] for d in app["bases_datos"]] == ["citas"]
-    assert app["migraciones"][0]["nombre"] == "base_multiempresa" and app["seguridad_por_fila"] is True
+    assert [m["nombre"] for m in app["migraciones"]] == ["base_multiempresa", "permisos_por_empresa"]
+    assert app["seguridad_por_fila"] is True
+    permisos = nexus.migration("gio", "citas", 2)["script"]
+    assert "CREATE SECURITY POLICY seguridad.[politica_permiso_usuario]" in permisos
+    assert "SESSION_CONTEXT(N'id_empresa')" in permisos and "trg_historial_permiso_inalterable" in permisos
     assert app["empresas"][0]["nombre_base"] == "citas"
     assert nexus.add_company("ana", "gio", "citas", {"id_empresa": "beta", "nombre": "Beta"})["base_nueva"] is False
 
@@ -81,7 +87,7 @@ def test_multi_company_model_shares_one_database_with_rls(nexus, provisioner):
         nexus.deploy("ana", "gio", "citas", "acme")
 
     deployed = nexus.deploy("ana", "gio", "citas")
-    assert deployed["despliegues"][0]["migraciones_aplicadas"] == [1, 2]
+    assert deployed["despliegues"][0]["migraciones_aplicadas"] == [1, 2, 3]
     assert provisioner.companies["citas"] == {"acme", "beta"}
 
 
@@ -146,12 +152,40 @@ def test_raw_migrations_are_numbered_immutable_and_comments_are_ignored(nexus):
     nexus.register_app("ana", "gio", {"id_aplicacion": "crm", "nombre": "CRM", "motor": "sqlserver", "modelo_datos": "multiempresa"})
     script = "-- USE no aplica en comentarios\nALTER TABLE dbo.empresas ADD nit NVARCHAR(20) NULL;\nGO\nSELECT 1;"
     created = nexus.add_migration("ana", "gio", "crm", {"nombre": "agregar_nit", "script": script})["migracion"]
-    assert created["numero"] == 2 and created["checksum"] == checksum(script)
+    assert created["numero"] == 3 and created["checksum"] == checksum(script)
     with pytest.raises(ConflictError):
         nexus.add_migration("ana", "gio", "crm", {"nombre": "agregar_nit", "script": "SELECT 2"})
-    assert nexus.migration("gio", "crm", 2)["script"] == script
+    assert nexus.migration("gio", "crm", 3)["script"] == script
     assert split_batches(script) == ["-- USE no aplica en comentarios\nALTER TABLE dbo.empresas ADD nit NVARCHAR(20) NULL;",
                                      "SELECT 1;"]
+
+
+def test_permissions_template_is_attached_once_to_apps_registered_before_the_rule(nexus):
+    nexus.register_app("ana", "gio", {"id_aplicacion": "crm", "nombre": "CRM", "motor": "sqlserver", "modelo_datos": "multiempresa"})
+    with pytest.raises(ConflictError, match="ya tiene la plantilla"):
+        nexus.attach_permissions("ana", "gio", "crm")
+    registry = nexus._registry
+    registry._migrations["crm"] = registry._migrations["crm"][:1]
+    nexus.add_migration("ana", "gio", "crm", {"nombre": "previa", "script": "SELECT 1;"})
+
+    attached = nexus.attach_permissions("ana", "gio", "crm")
+    assert attached["migracion"]["numero"] == 3 and attached["migracion"]["portable"] is True
+    assert set(attached["tablas"]) >= {"rol", "permiso_rol", "permiso_usuario", "historial_permiso"}
+    assert "permisos_efectivos" in attached["procedimientos"] and "permisos_usuario_ajustar" in attached["procedimientos"]
+    with pytest.raises(ConflictError):
+        nexus.attach_permissions("ana", "gio", "crm")
+
+
+def test_permissions_catalog_base_has_standard_events_and_admin_role():
+    from src.agents.database_agent import permission_template
+
+    base = permission_template.catalogo_base()
+    assert [e["codigo"] for e in base["eventos"]] == ["acceder", "consultar", "ingresar", "actualizar", "borrar", "enviar",
+                                                      "aprobar", "anular", "exportar", "imprimir", "publicar"]
+    assert base["opciones"][0]["codigo"] == "permisos" and "borrar" in base["opciones"][0]["eventos_mfa"]
+    assert {p["evento"] for p in base["roles"][0]["permisos"]} == set(permission_template.EVENTOS_ADMINISTRACION)
+    batches = permission_template.sqlserver_extras(False)
+    assert len(batches) > 10 and not any("«" in batch or "id_empresa" in batch for batch in batches)
 
 
 def test_failed_migration_marks_database_and_is_logged():
@@ -162,9 +196,9 @@ def test_failed_migration_marks_database_and_is_logged():
     result = nexus.deploy("ana", "gio", "inv")
     assert result["fallidas"] == 1
     failed = result["despliegues"][0]
-    assert failed["estado"] == "fallido" and failed["migraciones_aplicadas"] == [1] and "rota" in failed["detalle"]
+    assert failed["estado"] == "fallido" and failed["migraciones_aplicadas"] == [1, 2] and "rota" in failed["detalle"]
     db = nexus.get_app("gio", "inv")["bases_datos"][0]
-    assert db["estado"] == "error" and db["version"] == 1 and db["migraciones_pendientes"] == 1
+    assert db["estado"] == "error" and db["version"] == 2 and db["migraciones_pendientes"] == 1
     assert nexus.deployments("gio", "inv", 10)["total"] == 1
 
 
@@ -178,19 +212,19 @@ def test_environment_gets_same_migrations_and_only_chosen_companies(nexus, provi
 
     piloto = nexus.deploy_environment("ana", "gio", "citas", "piloto", ["plataforma", "piloto", "piloto"])
     assert piloto["nombre_base"] == "citas_piloto" and piloto["empresas"] == ["plataforma", "piloto"]
-    assert piloto["despliegue"]["migraciones_aplicadas"] == [1, 2] and piloto["despliegue"]["base_creada"]
+    assert piloto["despliegue"]["migraciones_aplicadas"] == [1, 2, 3] and piloto["despliegue"]["base_creada"]
     assert provisioner.companies["citas_piloto"] == {"plataforma", "piloto"}
     assert provisioner.companies["citas"] == {"plataforma", "carga"}
     assert [d["nombre_base"] for d in nexus.get_app("gio", "citas")["bases_datos"]] == ["citas"]
 
     nexus.add_migration("ana", "gio", "citas", {"nombre": "agregar_nota", "script": "SELECT 1"})
     assert nexus.environments("gio", "citas")["entornos"] == [
-        {"entorno": "piloto", "nombre_base": "citas_piloto", "version": 2, "migraciones_pendientes": 1,
+        {"entorno": "piloto", "nombre_base": "citas_piloto", "version": 3, "migraciones_pendientes": 1,
          "ultimo_despliegue": nexus.deployments("gio", "citas", 1)["despliegues"][0]}]
     again = nexus.deploy_environment("ana", "gio", "citas", "piloto", ["plataforma", "piloto"])
-    assert again["despliegue"]["migraciones_aplicadas"] == [3] and not again["despliegue"]["base_creada"]
+    assert again["despliegue"]["migraciones_aplicadas"] == [4] and not again["despliegue"]["base_creada"]
     assert nexus.get_app("gio", "citas")["bases_datos"][0]["migraciones_pendientes"] == 1
-    assert nexus.environments("gio", "citas")["entornos"][0]["version"] == 3
+    assert nexus.environments("gio", "citas")["entornos"][0]["version"] == 4
 
 
 def test_environment_rejects_bad_names_unknown_companies_and_foreign_databases():
@@ -217,10 +251,10 @@ def test_failed_environment_deploy_keeps_last_known_version():
     nexus = NexusAppService(InMemoryAppRegistry(), InMemoryProvisioner(fail_marker="FALLA"))
     nexus.register_app("ana", "gio", {"id_aplicacion": "inv", "nombre": "Inv", "motor": "sqlserver", "modelo_datos": "multiempresa",
                                       "empresas": [{"id_empresa": "acme", "nombre": "ACME"}]})
-    assert nexus.deploy_environment("ana", "gio", "inv", "piloto", ["acme"])["despliegue"]["version_resultante"] == 1
+    assert nexus.deploy_environment("ana", "gio", "inv", "piloto", ["acme"])["despliegue"]["version_resultante"] == 2
     nexus.add_migration("ana", "gio", "inv", {"nombre": "rota", "script": "SELECT 'FALLA'"})
     failed = nexus.deploy_environment("ana", "gio", "inv", "piloto", ["acme"])["despliegue"]
-    assert failed["estado"] == "fallido" and failed["version_resultante"] == 1 and "rota" in failed["detalle"]
+    assert failed["estado"] == "fallido" and failed["version_resultante"] == 2 and "rota" in failed["detalle"]
     assert nexus.environments("gio", "inv")["entornos"][0]["migraciones_pendientes"] == 1
     assert nexus.get_app("gio", "inv")["bases_datos"][0]["estado"] == "pendiente"
 
@@ -262,6 +296,9 @@ def test_api_registers_deploys_and_audits(api):
     assert client.get(f"{url}/otra", headers=auth).status_code == 404
     assert client.get(url, headers=auth).json()["aplicaciones"][0]["bases_desactualizadas"] == 0
 
+    assert client.post(f"{url}/vitalis/permisos", headers=auth).status_code == 409
+    assert client.post(f"{url}/vitalis/permisos", headers=headers(client, "luis")).status_code == 403
+
     _, entries = repo.list_audit("gio", None, None, None, None, None, 50, 0)
     assert {"nexus_registrar_aplicacion", "nexus_definir_tabla", "nexus_desplegar_aplicacion"} <= {e.accion for e in entries}
 
@@ -279,7 +316,7 @@ def test_api_deploys_environment_and_audits(api):
     assert deployed.status_code == 200
     assert deployed.json()["nombre_base"] == "llaves_piloto" and deployed.json()["despliegue"]["estado"] == "exitoso"
     listed = client.get(f"{url}/llaves/entornos", headers=auth).json()
-    assert listed["total"] == 1 and listed["entornos"][0]["version"] == 1
+    assert listed["total"] == 1 and listed["entornos"][0]["version"] == 2
 
     _, entries = repo.list_audit("gio", None, None, None, None, None, 50, 0)
-    assert any(e.accion == "nexus_desplegar_entorno" and "llaves_piloto v1=exitoso" in (e.detalles or "") for e in entries)
+    assert any(e.accion == "nexus_desplegar_entorno" and "llaves_piloto v2=exitoso" in (e.detalles or "") for e in entries)

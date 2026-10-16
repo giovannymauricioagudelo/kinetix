@@ -206,6 +206,25 @@ def test_new_app_foundations_start_with_its_own_repository(cortex):
     assert "(talleres_sicita_{empresa})" in foundations["Nexus"]["accion"]
 
 
+def test_new_app_applies_the_permissions_rule_from_foundations_to_interface(cortex):
+    sprints = _medium_app(cortex).to_dict()["sprints"]
+    foundations = {t["agente"]: t["accion"] for t in sprints[0]["tareas"]}
+    assert "permisos-por-empresa.mdc" in foundations["Sentinel"] and "concesiones y restricciones" in foundations["Sentinel"]
+    assert "plantilla de permisos" in foundations["Nexus"]
+    assert "permisos efectivos por opción y evento" in foundations["Vector"]
+    assert "ninguna ruta queda sin permiso" in foundations["Prism"]
+    interface = {t["agente"]: t["accion"] for t in next(s for s in sprints if s["clave"] == "interfaz")["tareas"]}
+    assert "pantalla de permisos" in interface["Aurora"] and "menú por permisos" in interface["Vector"]
+    assert all("esquema completo de permisos" in s["criterio_salida"] for s in sprints)
+
+
+def test_every_new_option_of_an_enhancement_applies_the_permission_schema(cortex):
+    request = _answer_all(cortex, cortex.submit("Quiero mejorar la búsqueda de clientes", app_id="crm"))
+    plan = {t.agent.codename: t.accion for t in request.plan}
+    assert "Toda opción nueva aplica el esquema de permisos" in plan["Vector"] and "requiere(opcion, evento)" in plan["Vector"]
+    assert "permiso_fuera_de_catalogo" in plan["Prism"]
+
+
 def test_unclear_app_id_is_asked_again_and_no_aplica_gets_generated_id(cortex):
     request = cortex.submit("Crear una aplicación nueva de citas con reportes y pantallas web")
     request = cortex.answer(request.id, {"id_aplicacion": "???"})

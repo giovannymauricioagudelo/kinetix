@@ -8,6 +8,7 @@ import pytest
 from bson import ObjectId
 from bson.decimal128 import Decimal128
 
+from src.agents.database_agent import permission_template
 from src.agents.database_agent.app_registry import InMemoryAppRegistry
 from src.agents.database_agent.app_service import NexusAppService
 from src.agents.database_agent.app_templates import base_definition, render, table_definition, validate_script
@@ -250,20 +251,21 @@ def test_mongo_app_moves_to_sqlserver_with_its_data_and_completes(nexus, servers
     _mongo_app(nexus, servers)
     plan = nexus.change_engine("ana", "gio", "tienda", {"motor": "sqlserver"}, preview=True)
     assert plan["viable"] and plan["destino"] == {"motor": "sqlserver", "conexion": "kinetix"}
-    assert plan["tablas_a_copiar"] == ["dbo.pedidos"]
+    assert plan["tablas_a_copiar"] == [*(f"dbo.{t}" for t in permission_template.TABLE_NAMES), "dbo.pedidos"]
 
     result = nexus.change_engine("ana", "gio", "tienda", {"motor": "sqlserver"})
-    assert result["cambio"]["estado"] == "datos_copiados" and result["copia"][0]["filas"] == 3
+    assert result["cambio"]["estado"] == "datos_copiados"
+    assert {c["tabla"]: c["filas"] for c in result["copia"]}["dbo.pedidos"] == 3
     copied = servers["kinetix"].datos.tables[("tienda_acme", "pedidos")]
     assert copied[0] == {"id": "0", "total": Decimal("0.50"), "detalle": '{"items": 0}'}
-    assert "CREATE TABLE [dbo].[pedidos]" in servers["kinetix"].provisioner.scripts["tienda_acme"][0]
+    assert "CREATE TABLE [dbo].[pedidos]" in servers["kinetix"].provisioner.scripts["tienda_acme"][1]
     app = nexus.get_app("gio", "tienda")
     assert (app["motor"], app["conexion"]) == ("sqlserver", "kinetix")
-    assert app["bases_datos"][0]["version"] == 1 and app["cambio_motor_activo"]["estado"] == "datos_copiados"
+    assert app["bases_datos"][0]["version"] == 2 and app["cambio_motor_activo"]["estado"] == "datos_copiados"
 
     with pytest.raises(ConflictError, match="cambio de motor en curso"):
         nexus.table("ana", "gio", "tienda", {**PEDIDOS, "nombre": "otra"})
-    assert nexus.copy_engine_data("ana", "gio", "tienda")["copia"][0]["estado"] == "ya_copiada"
+    assert {c["tabla"]: c["estado"] for c in nexus.copy_engine_data("ana", "gio", "tienda")["copia"]}["dbo.pedidos"] == "ya_copiada"
     done = nexus.complete_engine_change("ana", "gio", "tienda")
     assert done["cambio"]["estado"] == "completado" and "sin borrar" in done["nota"]
     assert len(servers["docs"].datos.tables[("tienda_acme", "pedidos")]) == 3
@@ -281,7 +283,7 @@ def test_revert_restores_the_original_engine_and_databases(nexus, servers):
     assert reverted["cambio"]["estado"] == "revertido" and "quedan sin borrar" in reverted["nota"]
     app = nexus.get_app("gio", "tienda")
     assert (app["motor"], app["conexion"], app["cambio_motor_activo"]) == ("mongodb", "docs", None)
-    assert app["bases_datos"][0]["estado"] == "desplegada" and app["bases_datos"][0]["version"] == 1
+    assert app["bases_datos"][0]["estado"] == "desplegada" and app["bases_datos"][0]["version"] == 2
 
     again = nexus.change_engine("ana", "gio", "tienda", {"motor": "postgresql"}, preview=True)
     assert again["viable"] and any("cambio revertido" in w for w in again["advertencias"])
@@ -311,15 +313,15 @@ def test_manual_sql_needs_an_equivalent_before_changing_engine(nexus, servers):
     with pytest.raises(InvalidInputError, match="portable"):
         nexus.add_equivalent("ana", "gio", "tienda", 1, {"motor": "sqlserver", "script": "SELECT 1"})
     with pytest.raises(InvalidInputError, match="ya está escrita"):
-        nexus.add_equivalent("ana", "gio", "tienda", 2, {"motor": "mongodb", "script": "[]"})
+        nexus.add_equivalent("ana", "gio", "tienda", 3, {"motor": "mongodb", "script": "[]"})
     with pytest.raises(InvalidInputError):
-        nexus.add_equivalent("ana", "gio", "tienda", 2, {"motor": "sqlserver", "script": "DROP TABLE dbo.pedidos"})
-    added = nexus.add_equivalent("ana", "gio", "tienda", 2, {"motor": "sqlserver", "script": "SELECT 1;"})["migracion"]
+        nexus.add_equivalent("ana", "gio", "tienda", 3, {"motor": "sqlserver", "script": "DROP TABLE dbo.pedidos"})
+    added = nexus.add_equivalent("ana", "gio", "tienda", 3, {"motor": "sqlserver", "script": "SELECT 1;"})["migracion"]
     assert added["equivalentes"] == ["sqlserver"] and added["scripts_equivalentes"]["sqlserver"] == "SELECT 1;"
     with pytest.raises(ConflictError, match="inmutables"):
-        nexus.add_equivalent("ana", "gio", "tienda", 2, {"motor": "sqlserver", "script": "SELECT 2;"})
+        nexus.add_equivalent("ana", "gio", "tienda", 3, {"motor": "sqlserver", "script": "SELECT 2;"})
 
-    assert nexus.get_app("gio", "tienda")["migraciones"][1]["equivalentes"] == ["sqlserver"]
+    assert nexus.get_app("gio", "tienda")["migraciones"][2]["equivalentes"] == ["sqlserver"]
 
     result = nexus.change_engine("ana", "gio", "tienda", {"motor": "sqlserver"})
     assert result["cambio"]["estado"] == "datos_copiados"

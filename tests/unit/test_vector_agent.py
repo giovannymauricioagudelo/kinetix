@@ -1,6 +1,7 @@
 """Vector (DevelopmentAgent): análisis AST, plantillas y escritura git sin tocar master ni el árbol de trabajo."""
 
 import ast
+import json
 
 import pytest
 
@@ -80,6 +81,94 @@ def test_analyzer_requires_stored_procedures_for_data_access():
     assert "sql_en_linea" not in rules(analyzer.analyze_files({"tests/unit/test_repo.py": INLINE_SQL}))
 
 
+ROUTES = '''
+from fastapi import APIRouter, Depends
+router = APIRouter()
+protegido = APIRouter(dependencies=[Depends(requiere("reportes", "consultar"))])
+
+
+@router.get("/inmuebles")
+def listar(principal=Depends(requiere("inmuebles", "consultar"))):
+    return []
+
+
+@router.post("/inmuebles")
+def crear(principal=Depends(autenticado)):
+    return {}
+
+
+# permisos: publico
+@router.get("/salud")
+def salud():
+    return {}
+
+
+@router.post("/ingresar")
+# permisos: autenticado
+def ingresar():
+    return {}
+
+
+@protegido.get("/reportes")
+def reportes():
+    return []
+'''
+
+
+def test_analyzer_requires_option_and_event_permission_on_app_routes():
+    loose = [f for f in analyzer.analyze_files({"src/api/rutas.py": ROUTES}, exigir_permisos=True)["hallazgos"]
+             if f["regla"] == "ruta_sin_permiso"]
+    assert [f["severidad"] for f in loose] == ["critica"] and "crear" in loose[0]["mensaje"]
+    assert "ruta_sin_permiso" not in rules(analyzer.analyze_files({"src/api/rutas.py": ROUTES}))
+    assert "ruta_sin_permiso" not in rules(analyzer.analyze_files({"tests/unit/test_rutas.py": ROUTES},
+                                                                  exigir_permisos=True))
+
+
+def catalogo(opciones, roles):
+    eventos = [{"codigo": c} for c in ("acceder", "consultar", "ingresar", "actualizar", "borrar")]
+    return json.dumps({"eventos": eventos, "opciones": [{"codigo": c, "eventos": e} for c, e in opciones.items()],
+                       "roles": [{"codigo": "administrador", "permisos": [{"opcion": o, "evento": e} for o, e in roles]}]})
+
+
+ADMIN = {"permisos": ["acceder", "consultar"]}
+ADMIN_ROL = [("permisos", "acceder"), ("permisos", "consultar")]
+NEW_OPTION_ROUTES = '''
+@router.get("/inmuebles")
+def listar(principal=Depends(requiere("inmuebles", "consultar"))):
+    return []
+
+
+@router.delete("/inmuebles/{id}")
+def borrar(principal=Depends(requiere("inmuebles", "anular"))):
+    return {}
+
+
+@router.get("/visitas")
+def visitas(principal=Depends(requiere("visitas", "consultar"))):
+    return []
+'''
+
+
+def test_new_options_must_apply_the_whole_permission_schema():
+    completo = catalogo({**ADMIN, "inmuebles": ["acceder", "consultar"]}, ADMIN_ROL + [("inmuebles", "acceder")])
+    result = analyzer.analyze_files({"src/api/rutas.py": NEW_OPTION_ROUTES}, exigir_permisos=True, catalogo=completo)
+    fuera = sorted(f["mensaje"].split(":")[0] for f in result["hallazgos"] if f["regla"] == "permiso_fuera_de_catalogo")
+    assert fuera == ["requiere('inmuebles', 'anular')", "requiere('visitas', 'consultar')"]
+    assert "catalogo_permisos" not in rules(result)
+
+    incompleto = catalogo({"inmuebles": ["consultar", "firmar"]}, [("inmuebles", "consultar"), ("otra", "acceder")])
+    mensajes = [f["mensaje"] for f in analyzer.analyze_files({}, exigir_permisos=True, catalogo=incompleto)["hallazgos"]]
+    for esperado in ("Falta la opción 'permisos'", "'inmuebles' sin el evento 'acceder'", "evento 'firmar' no está declarado",
+                     "'inmuebles' sin rol de sistema", "concede 'otra.acceder'"):
+        assert any(esperado in m for m in mensajes), esperado
+
+    for texto in (None, "{no es json", '{"eventos": []}'):
+        result = analyzer.analyze_files({"src/api/rutas.py": NEW_OPTION_ROUTES}, exigir_permisos=True, catalogo=texto)
+        assert rules(result) & {"catalogo_permisos", "permiso_fuera_de_catalogo"} == {"catalogo_permisos"}
+    sin_exigir = rules(analyzer.analyze_files({"src/api/rutas.py": NEW_OPTION_ROUTES}))
+    assert not sin_exigir & {"catalogo_permisos", "permiso_fuera_de_catalogo"}
+
+
 def test_analyzer_reports_syntax_errors():
     result = analyzer.analyze_files({"src/roto.py": "def x(:\n"})
     assert result["errores_sintaxis"] and result["errores_sintaxis"][0]["archivo"] == "src/roto.py"
@@ -119,6 +208,23 @@ def test_analysis_uses_tracked_files_and_is_recorded(vector):
         service.analyze_paths("ana", ["../fuera"])
     with pytest.raises(InvalidInputError):
         service.analyze_paths("ana", ["venv"])
+
+
+def test_app_repositories_check_routes_against_the_permissions_catalog(vector):
+    service, path = vector
+    (path / "src" / "rutas.py").write_text(NEW_OPTION_ROUTES, encoding="utf-8")
+    assert "permiso_fuera_de_catalogo" not in rules(service.analyze_paths("ana", ["src"], solo_versionados=False))
+
+    (path / "kinetix.json").write_text("{}", encoding="utf-8")
+    sin_catalogo = rules(service.analyze_paths("ana", ["src"], solo_versionados=False))
+    assert "catalogo_permisos" in sin_catalogo and "permiso_fuera_de_catalogo" not in sin_catalogo
+
+    (path / "security").mkdir()
+    (path / "security" / "permisos_catalogo.json").write_text(
+        catalogo({**ADMIN, "inmuebles": ["acceder", "consultar", "borrar"]}, ADMIN_ROL + [("inmuebles", "acceder")]),
+        encoding="utf-8")
+    gate = service.security_gate(["src/rutas.py"])
+    assert {f["regla"] for f in gate["hallazgos_criticos"]} == {"permiso_fuera_de_catalogo"}
 
 
 def test_commits_go_to_work_branches_without_touching_master(vector):

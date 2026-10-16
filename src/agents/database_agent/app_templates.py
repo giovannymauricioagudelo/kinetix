@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from src.agents.database_agent import permission_template
 from src.agents.database_agent.database_agent import ColumnDefinition, ColumnType, TableDefinition, quote_identifier, sql_string
 from src.agents.database_agent.dialects import (
     MOTORES,
@@ -281,8 +282,29 @@ BASE_RENDERERS: Dict[str, Callable[[], str]] = {
 }
 
 
+def _render_permissions(definition: Dict[str, Any], motor: str) -> str:
+    multi, rls = definition["multiempresa"], definition["seguridad_por_fila"]
+    scripts = [TABLE_RENDERERS[motor](table, multi, rls) for table in permission_template.tables(multi)]
+    if motor == "mongodb":
+        return json.dumps([command for script in scripts for command in json.loads(script)], indent=2, ensure_ascii=False)
+    if motor in PROCEDURE_ENGINES:
+        scripts.extend(f"{batch}\n" for batch in permission_template.sqlserver_extras(multi))
+    return "GO\n".join(scripts)
+
+
+def migration_tables(definition: Dict[str, Any]) -> List[TableDefinition]:
+    """Tablas que crea una migración portable (las que se copian al cambiar de motor)."""
+    if definition.get("tipo") == TABLE_KIND:
+        return [definition_table(definition)]
+    if definition.get("tipo") == permission_template.PERMISSIONS_KIND:
+        return permission_template.tables(definition["multiempresa"])
+    return []
+
+
 def render(definition: Dict[str, Any], motor: str) -> str:
     """Script de la definición neutral para el motor; ValueError si el motor no admite algo de la tabla."""
+    if definition["tipo"] == permission_template.PERMISSIONS_KIND:
+        return _render_permissions(definition, motor)
     procedures = with_procedures(definition) and motor in PROCEDURE_ENGINES
     if definition["tipo"] == BASE_KIND:
         script = BASE_RENDERERS[motor]()

@@ -130,6 +130,7 @@ ATLAS_CONSTRAINTS:
 - Foreign keys obligatorias donde aplique
 - Comentarios en SQL deben cumplir formato (--| DESCRIPCIÓN |)
 - Todo acceso a datos (consulta, inserción, actualización, borrado) MUST ser por procedimientos almacenados; el rol de la aplicación solo tiene EXECUTE (ver .cursor/rules/acceso-datos-procedimientos.mdc)
+- Toda aplicación incluye la plantilla de permisos por empresa (opciones, eventos, roles, concesiones y restricciones por usuario, historial inalterable) generada por Nexus (ver .cursor/rules/permisos-por-empresa.mdc)
 
 # ==============================================================================
 # AGENTE 4: IRIS (Especialista UI/UX)
@@ -260,6 +261,8 @@ HEPHAESTUS_CONSTRAINTS:
 - Clean Architecture obligatoria: entities→repositories→services→controllers
 - Máximo 3 niveles de nesting en componentes React
 - Repositorios MUST llamar procedimientos almacenados (EXEC esquema.proc con parámetros); prohibido SQL de datos en línea
+- Cada ruta MUST exigir permiso efectivo de opción y evento (requiere(opcion, evento)) o marcarse '# permisos: publico' / '# permisos: autenticado'; el menú se arma con los permisos efectivos
+- Toda opción nueva MUST aplicar el esquema completo de permisos: catálogo (security/permisos_catalogo.json con 'acceder' y sus eventos), roles de sistema, sincronización por empresa, rutas con requiere, menú filtrado y pruebas
 
 # ==============================================================================
 # AGENTE 7: SENTINEL (QA, LLM-as-a-Judge & DevSecOps)
@@ -311,6 +314,7 @@ SENTINEL_CONSTRAINTS:
 - OWASP Top 10 validación obligatoria
 - Licencias de dependencias deben ser compatibles (MIT, Apache-2.0, etc.) - NO GPL
 - approval = false si hay SQL de datos en línea fuera de las excepciones de administración o si el usuario de la aplicación tiene permisos directos sobre tablas
+- approval = false si una ruta de la aplicación no declara permiso (regla ruta_sin_permiso), si una opción no aplica el esquema completo (catalogo_permisos, permiso_fuera_de_catalogo) o si fallan las pruebas de la regla de conflicto de permisos (redundante, contradictoria, revocación automática)
 
 # ==============================================================================
 # AGENTE 8: CHRONOS (Documentador)

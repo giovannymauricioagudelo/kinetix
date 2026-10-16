@@ -484,21 +484,42 @@ DEFAULT_ACTIONS: Dict[str, str] = {
     INSIGHT.codename: "Diseñar reportes, KPIs y dashboards.",
     AURORA.codename: "Diseñar flujos de usuario, pantallas y componentes accesibles.",
     GENESIS.codename: "Diseñar los componentes de IA requeridos.",
-    VECTOR.codename: "Implementar los cambios siguiendo los diseños aprobados; acceso a datos solo por procedimientos almacenados.",
-    PRISM.codename: "Validar con pruebas unitarias, de integración y de seguridad; bloquear SQL de datos en línea.",
+    VECTOR.codename: ("Implementar los cambios siguiendo los diseños aprobados; acceso a datos solo por procedimientos "
+                      "almacenados y cada ruta con su permiso de opción y evento."),
+    PRISM.codename: "Validar con pruebas unitarias, de integración y de seguridad; bloquear SQL de datos en línea y rutas sin permiso.",
     ORBIT.codename: "Desplegar a producción con plan de reversión.",
-    SENTINEL.codename: "Definir autenticación, roles, permisos y auditoría; exigir MFA a los roles sensibles.",
+    SENTINEL.codename: ("Definir autenticación, roles y auditoría; exigir MFA a los roles sensibles; permisos por empresa "
+                        "sobre cada opción y evento, definidos por rol y ajustados por usuario con concesiones y "
+                        "restricciones que no chocan, con historial (permisos-por-empresa.mdc)."),
     ARGUS.codename: "Configurar métricas, sondas de salud y alertas; verificar el SLA después del despliegue.",
 }
+PERMISSIONS_ACTIONS: Dict[str, str] = {
+    NEXUS.codename: ("Mantener la plantilla de permisos por empresa (opciones, eventos, roles, concesiones, "
+                     "restricciones e historial) y el catálogo de la aplicación sincronizado con app.permisos_sincronizar."),
+    VECTOR.codename: ("Exigir en cada ruta el permiso efectivo (opción + evento) del usuario en su empresa, exponer la "
+                      "administración de permisos por rol, usuario y combinación con MFA reciente y auditar cada cambio."),
+    AURORA.codename: ("Armar el menú con las opciones donde el usuario puede acceder, mostrar acciones según los eventos "
+                      "permitidos e incluir la pantalla de permisos (por rol, por usuario, combinada e historial)."),
+    PRISM.codename: ("Probar la regla de conflicto de permisos (redundante, contradictoria, revocación automática), el menú "
+                     "filtrado y que ninguna ruta quede sin permiso (regla ruta_sin_permiso de Vector)."),
+}
+NEW_OPTION_RULE = ("Toda opción nueva aplica el esquema de permisos: se declara en security/permisos_catalogo.json con "
+                   "'acceder' y sus eventos (y los que exigen MFA), se asigna a los roles de sistema que la usan, se "
+                   "sincroniza en cada empresa con app.permisos_sincronizar, cada ruta exige requiere(opcion, evento) y "
+                   "entra al menú solo con 'acceder'.")
+NEW_OPTION_TESTS = ("Probar que cada opción nueva está en el catálogo, que sus rutas exigen su permiso y que sin "
+                    "'acceder' no aparece en el menú (reglas catalogo_permisos y permiso_fuera_de_catalogo de Vector).")
 
 TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
     RequestType.NEW_APP: {
         NEXUS.codename: ("Registrar la aplicación en kinetix con {modelo} en {motor}, crear su base de datos independiente "
                          "y desplegar tablas y migraciones según ese modelo. Las tablas quedan en formato portable para "
                          "poder cambiar de motor si la aplicación escala. Cada tabla trae sus procedimientos almacenados "
-                         "y la aplicación se conecta con un rol de solo EXECUTE."),
-        AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación, tablero, listados con "
-                          "filtros y exportación, formularios por secciones, detalle y configuración."),
+                         "y la aplicación se conecta con un rol de solo EXECUTE. Incluye la plantilla de permisos por "
+                         "empresa, rol y usuario con su historial."),
+        AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación filtrada por permisos, "
+                          "tablero, listados con filtros y exportación, formularios por secciones, detalle, configuración "
+                          "y administración de permisos."),
         VECTOR.codename: ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente, e "
                           "implementar allí los diseños aprobados; nada de la aplicación se guarda en kinetix-studio."),
     },
@@ -511,8 +532,10 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
         ARGUS.codename: "Comparar latencia, errores y recursos contra la línea base y el objetivo de carga.",
     },
     RequestType.ENHANCEMENT: {
-        VECTOR.codename: "Implementar la funcionalidad según los criterios de aceptación.",
-        PRISM.codename: "Validar criterios de aceptación y ejecutar pruebas de regresión.",
+        AURORA.codename: ("Diseñar las pantallas de la funcionalidad dentro del menú filtrado por permisos, con acciones "
+                          "visibles según los eventos permitidos."),
+        VECTOR.codename: "Implementar la funcionalidad según los criterios de aceptación. " + NEW_OPTION_RULE,
+        PRISM.codename: "Validar criterios de aceptación y ejecutar pruebas de regresión. " + NEW_OPTION_TESTS,
     },
     RequestType.BUGFIX: {
         VECTOR.codename: "Reproducir el error, identificar la causa raíz y corregirla.",
@@ -528,7 +551,8 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
 # ============================================================================
 
 SPRINT_COMPLEXITIES = frozenset({Complexity.MEDIUM, Complexity.HIGH})
-SPRINT_EXIT_CRITERIA = ("Entregable demostrado, pruebas de Prism en verde y aprobación humana para cerrar el sprint; "
+SPRINT_EXIT_CRITERIA = ("Entregable demostrado, pruebas de Prism en verde, toda opción nueva del sprint con el esquema "
+                        "completo de permisos (catálogo, roles, rutas y menú) y aprobación humana para cerrar el sprint; "
                         "el siguiente sprint solo inicia cuando un humano lo decide.")
 Q_NEW_APP_ID = Question(
     "id_aplicacion",
@@ -581,8 +605,9 @@ CAPABILITY_SPRINTS: Dict[str, SprintSpec] = {
     "seguridad": ("seguridad", "Seguridad y permisos", "Ajustar autenticación, roles, permisos y auditoría.",
                   "Flujos de acceso protegidos y auditados.", (
                       (SENTINEL, DEFAULT_ACTIONS[SENTINEL.codename]),
-                      (VECTOR, "Aplicar los permisos en endpoints y pantallas."),
-                      (PRISM, "Pruebas de autorización y de los controles OWASP aplicables."))),
+                      (VECTOR, PERMISSIONS_ACTIONS[VECTOR.codename]),
+                      (PRISM, "Pruebas de autorización, de la regla de conflicto de permisos y de los controles OWASP "
+                              "aplicables."))),
     "integraciones": ("integraciones", "Integraciones y APIs", "Conectar la aplicación con los sistemas externos.",
                       "Contratos OpenAPI publicados e integraciones funcionando.", (
                           (SYNAPSE, "Definir contratos de API e integraciones externas con seguridad y rate limiting."),
@@ -590,9 +615,11 @@ CAPABILITY_SPRINTS: Dict[str, SprintSpec] = {
                           (PRISM, "Pruebas de contrato e integración contra dobles de los sistemas externos."))),
     "interfaz": ("interfaz", "Interfaz de usuario", "Construir las pantallas y flujos principales.",
                  "Pantallas navegables y accesibles (WCAG AA).", (
-                     (AURORA, "Diseñar flujos de usuario, pantallas y componentes accesibles."),
-                     (VECTOR, "Implementar las pantallas con el sistema de diseño."),
-                     (PRISM, "Pruebas E2E de los flujos principales y revisión de accesibilidad."))),
+                     (AURORA, "Diseñar flujos de usuario, pantallas y componentes accesibles. "
+                              + PERMISSIONS_ACTIONS[AURORA.codename]),
+                     (VECTOR, "Implementar las pantallas con el sistema de diseño y el menú por permisos efectivos."),
+                     (PRISM, "Pruebas E2E de los flujos principales, del menú filtrado por permisos y revisión de "
+                             "accesibilidad."))),
     "reportes": ("reportes", "Reportes y analítica", "Entregar los reportes, KPIs y dashboards acordados.",
                  "Dashboards con datos reales y KPIs verificados.", (
                      (INSIGHT, DEFAULT_ACTIONS[INSIGHT.codename]),
@@ -646,8 +673,10 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
                 (NEXUS, nexus_action),
                 (SENTINEL, DEFAULT_ACTIONS[SENTINEL.codename]),
                 (VECTOR, "Crear en el repositorio de {aplicacion} el esqueleto del proyecto (clean architecture) con "
-                         "autenticación integrada, repositorios que solo llaman procedimientos almacenados y CI."),
-                (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI.")))]
+                         "autenticación integrada, repositorios que solo llaman procedimientos almacenados, permisos "
+                         "efectivos por opción y evento en cada ruta, catálogo de permisos y CI."),
+                (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI, incluida la prueba de que ninguna "
+                        "ruta queda sin permiso.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):
             specs.append(COMPLIANCE_SPRINT)
@@ -680,7 +709,8 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
     if request.request_type == RequestType.ENHANCEMENT:
         specs = [("analisis", "Análisis y diseño del cambio", "Acordar el diseño técnico y las pruebas de aceptación.",
                   "ADR del cambio y pruebas de aceptación definidas.", (
-                      (VECTOR, "Analizar el impacto en el código y documentar el diseño técnico (ADR)."),
+                      (VECTOR, "Analizar el impacto en el código y documentar el diseño técnico (ADR), con las "
+                               "opciones nuevas y los eventos de permiso de cada una."),
                       (PRISM, "Definir las pruebas de aceptación a partir de los criterios.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in CHANGE_CAPABILITY_ORDER if c in caps)
         if len(specs) == 1:

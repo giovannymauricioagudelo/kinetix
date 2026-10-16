@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.agents.interface_design_agent.design import DesignError
 from src.agents.interface_design_agent.exporters import to_css
 
-SCREEN_TYPES = ("login", "dashboard", "list", "form", "detail", "settings")
+SCREEN_TYPES = ("login", "dashboard", "list", "form", "detail", "settings", "permissions")
 LANGUAGES = ("es", "en", "pt")
 FIELD_TYPES = ("text", "email", "number", "date", "tel", "select", "textarea", "checkbox")
 FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -152,6 +152,56 @@ _TEXTS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+_PERMISSION_TEXTS: Dict[str, Dict[str, Any]] = {
+    "es": {
+        "permissions": "Permisos", "by_role": "Por rol", "by_user": "Por usuario", "role": "Rol", "option": "Opción",
+        "origin": "Origen", "from_role": "Rol", "concession": "Concesión", "restriction": "Restricción",
+        "grant": "Conceder", "restrict": "Restringir", "revoke": "Revocar", "reason": "Motivo", "valid_until": "Vigente hasta",
+        "type": "Tipo", "event": "Evento", "effective": "Permisos efectivos", "new_role": "Nuevo rol",
+        "perm_rule": "Permiso efectivo = (rol + concesiones) − restricciones. Una concesión solo agrega lo que el rol no "
+                     "tiene y una restricción solo quita lo que el rol sí tiene; al cambiar el rol se revocan solas las que "
+                     "pierden sentido.",
+        "mfa_hint": "Los cambios de permisos piden tu código de verificación reciente.",
+        "revoke_title": "¿Revocar este permiso del usuario?", "revoke_text": "Queda en el historial con tu motivo.",
+        "roles": ["Administrador", "Asistente", "Financiero"],
+        "event_names": ["Acceder", "Consultar", "Ingresar", "Actualizar", "Borrar", "Enviar", "Aprobar", "Anular",
+                        "Exportar", "Imprimir", "Publicar"],
+        "perm_events": ["concedió", "revocó", "restringió", "asignó el rol a", "sincronizó el catálogo de"],
+    },
+    "en": {
+        "permissions": "Permissions", "by_role": "By role", "by_user": "By user", "role": "Role", "option": "Option",
+        "origin": "Origin", "from_role": "Role", "concession": "Grant", "restriction": "Restriction",
+        "grant": "Grant", "restrict": "Restrict", "revoke": "Revoke", "reason": "Reason", "valid_until": "Valid until",
+        "type": "Type", "event": "Event", "effective": "Effective permissions", "new_role": "New role",
+        "perm_rule": "Effective permission = (role + grants) − restrictions. A grant only adds what the role lacks and a "
+                     "restriction only removes what the role has; when the role changes, entries that no longer make "
+                     "sense are revoked automatically.",
+        "mfa_hint": "Permission changes ask for a recent verification code.",
+        "revoke_title": "Revoke this user permission?", "revoke_text": "It stays in the history with your reason.",
+        "roles": ["Administrator", "Assistant", "Finance"],
+        "event_names": ["Access", "View", "Create", "Update", "Delete", "Send", "Approve", "Void", "Export", "Print",
+                        "Publish"],
+        "perm_events": ["granted", "revoked", "restricted", "assigned the role to", "synced the catalog of"],
+    },
+    "pt": {
+        "permissions": "Permissões", "by_role": "Por perfil", "by_user": "Por usuário", "role": "Perfil", "option": "Opção",
+        "origin": "Origem", "from_role": "Perfil", "concession": "Concessão", "restriction": "Restrição",
+        "grant": "Conceder", "restrict": "Restringir", "revoke": "Revogar", "reason": "Motivo", "valid_until": "Válido até",
+        "type": "Tipo", "event": "Evento", "effective": "Permissões efetivas", "new_role": "Novo perfil",
+        "perm_rule": "Permissão efetiva = (perfil + concessões) − restrições. Uma concessão só adiciona o que o perfil não "
+                     "tem e uma restrição só remove o que o perfil tem; ao mudar o perfil, as que perdem sentido são "
+                     "revogadas automaticamente.",
+        "mfa_hint": "Alterações de permissões pedem um código de verificação recente.",
+        "revoke_title": "Revogar esta permissão do usuário?", "revoke_text": "Fica no histórico com o seu motivo.",
+        "roles": ["Administrador", "Assistente", "Financeiro"],
+        "event_names": ["Acessar", "Consultar", "Incluir", "Atualizar", "Excluir", "Enviar", "Aprovar", "Anular",
+                        "Exportar", "Imprimir", "Publicar"],
+        "perm_events": ["concedeu", "revogou", "restringiu", "atribuiu o perfil a", "sincronizou o catálogo de"],
+    },
+}
+for _lang, _extra in _PERMISSION_TEXTS.items():
+    _TEXTS[_lang].update(_extra)
+
 _ICONS = {
     "home": '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
     "list": '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>'
@@ -267,12 +317,16 @@ def screen_options(raw: Optional[Dict[str, Any]], lang: str) -> Dict[str, Any]:
     multi = raw.get("multiempresa", False)
     if not isinstance(multi, bool):
         raise DesignError("multiempresa debe ser true o false")
+    allowed = raw.get("modulos_permitidos", modules)
+    if not isinstance(allowed, list) or any(m not in modules for m in allowed):
+        raise DesignError("modulos_permitidos: nombres de modulos donde el usuario tiene el evento acceder")
     return {
         "entidad": entity,
         "entidad_plural": plural,
         "campos": fields,
         "columnas": [next(f for f in fields if f["nombre"] == c) for c in columns],
         "modulos": modules,
+        "modulos_permitidos": allowed,
         "multiempresa": multi,
         "empresas": _texts(raw.get("empresas"), t["companies"], MAX_COMPANIES, 60, "empresas"),
         "usuario": _text(raw.get("usuario"), t["user"], 60, "usuario"),
@@ -652,7 +706,7 @@ def _shell(t: Dict[str, Any], app: str, opts: Dict[str, Any], active: int, conte
     nav = "".join(
         f'<li><a href="#"{current if i == active else ""}>{_icon(_MODULE_ICONS[i % len(_MODULE_ICONS)])}'
         f'<span class="kx-label">{_esc(m)}</span></a></li>'
-        for i, m in enumerate(opts["modulos"])
+        for i, m in enumerate(opts["modulos"]) if m in opts["modulos_permitidos"]
     )
     company = ""
     if opts["multiempresa"]:
@@ -993,6 +1047,80 @@ def _settings(t, app, opts, lang):
                                                                     "Select", "Checkbox", "Button", "Toast"]
 
 
+def _tabs(label: str, tabs: List[Tuple[str, str]], panels: Dict[str, str]) -> str:
+    unfocused = ' tabindex="-1"'
+    buttons = "".join(
+        f'<button class="kx-tab" role="tab" id="tab-{k}" aria-controls="panel-{k}" aria-selected="{"true" if i == 0 else "false"}"'
+        f'{"" if i == 0 else unfocused} type="button">{_esc(name)}</button>' for i, (k, name) in enumerate(tabs))
+    body = "".join(f'<div class="kx-panel" role="tabpanel" id="panel-{k}" aria-labelledby="tab-{k}" tabindex="0"'
+                   f'{"" if i == 0 else " hidden"}>{panels[k]}</div>' for i, (k, _) in enumerate(tabs))
+    return f'<div class="kx-tabs" role="tablist" aria-label="{_esc(label)}">{buttons}</div>{body}'
+
+
+def _permissions(t, app, opts):
+    """Administración de permisos: matriz opción × evento por rol, ajustes por usuario e historial."""
+    modules, events = opts["modulos"], t["event_names"]
+    role_options = "".join(f"<option>{_esc(r)}</option>" for r in t["roles"])
+    head = "".join(f'<th scope="col">{_esc(e)}</th>' for e in events)
+    matrix_rows = "".join(
+        f'<tr><th scope="row">{_esc(m)}</th>' + "".join(
+            f'<td><input type="checkbox" aria-label="{_esc(m)}: {_esc(e)}"{" checked" if (i + j) % 3 != 2 or j == 0 else ""}></td>'
+            for j, e in enumerate(events)) + "</tr>"
+        for i, m in enumerate(modules))
+    by_role = (
+        f'<div class="kx-filters"><div class="kx-field"><label for="p-rol">{_esc(t["role"])}</label><select id="p-rol">{role_options}</select></div>'
+        f'<button class="kx-btn kx-btn--secondary" type="button">{_icon("plus")}{_esc(t["new_role"])}</button></div>'
+        f'<div class="kx-table-wrap"><table class="kx-table"><caption class="sr-only">{_esc(t["by_role"])}</caption>'
+        f'<thead><tr><th scope="col">{_esc(t["option"])}</th>{head}</tr></thead><tbody>{matrix_rows}</tbody></table></div>'
+        f'<div class="kx-dialog-actions"><button class="kx-btn" type="button">{_icon("check")}{_esc(t["save"])}</button></div>'
+    )
+    origins = [("from_role", "active"), ("from_role", "active"), ("concession", "pending"), ("restriction", "inactive")]
+    effective = "".join(
+        f'<tr><td>{_esc(modules[i % len(modules)])}</td><td>{_esc(events[(i * 2) % len(events)])}</td>'
+        f'<td><span class="kx-badge kx-badge--{badge}">{_esc(t[origin])}</span></td><td>'
+        + ("" if origin == "from_role" else
+           f'<button class="kx-btn kx-btn--ghost" type="button" data-kx-confirm="kx-revoke">{_esc(t["revoke"])}</button>')
+        + "</td></tr>"
+        for i, (origin, badge) in enumerate(origins))
+    users = "".join(f"<option>{_esc(n)}</option>" for n in _SAMPLE_NAMES[:4])
+    module_options = "".join(f"<option>{_esc(m)}</option>" for m in modules)
+    event_options = "".join(f"<option>{_esc(e)}</option>" for e in events)
+    by_user = (
+        f'<div class="kx-form-grid"><div class="kx-field"><label for="p-usuario">{_esc(t["user"])}</label><select id="p-usuario">{users}</select></div>'
+        f'<div class="kx-field"><label for="p-rol-usuario">{_esc(t["role"])}</label>'
+        f'<select id="p-rol-usuario">{role_options}</select></div></div>'
+        f'<h2>{_esc(t["effective"])}</h2><div class="kx-table-wrap"><table class="kx-table"><caption class="sr-only">{_esc(t["effective"])}</caption>'
+        f'<thead><tr><th scope="col">{_esc(t["option"])}</th><th scope="col">{_esc(t["event"])}</th><th scope="col">{_esc(t["origin"])}</th>'
+        f'<th scope="col"><span class="sr-only">{_esc(t["actions"])}</span></th></tr></thead><tbody>{effective}</tbody></table></div>'
+        f'<form class="kx-form-grid" novalidate data-kx-validate onsubmit="return false">'
+        f'<div class="kx-field"><label for="p-tipo">{_esc(t["type"])}</label><select id="p-tipo"><option>{_esc(t["concession"])}</option>'
+        f'<option>{_esc(t["restriction"])}</option></select></div>'
+        f'<div class="kx-field"><label for="p-opcion">{_esc(t["option"])}</label><select id="p-opcion">{module_options}</select></div>'
+        f'<div class="kx-field"><label for="p-evento">{_esc(t["event"])}</label><select id="p-evento">{event_options}</select></div>'
+        f'<div class="kx-field"><label for="p-vigencia">{_esc(t["valid_until"])}</label><input id="p-vigencia" type="date"></div>'
+        f'<div class="kx-field kx-span-2"><label for="p-motivo">{_esc(t["reason"])} <span class="kx-req" aria-hidden="true">*</span></label>'
+        f'<textarea id="p-motivo" required aria-required="true" aria-describedby="p-motivo-err"></textarea>'
+        f'<span id="p-motivo-err" class="kx-error" aria-live="polite"></span></div>'
+        f'<div class="kx-dialog-actions kx-span-2"><button class="kx-btn" type="submit">'
+        f'{_icon("check")}{_esc(t["grant"])} / {_esc(t["restrict"])}</button></div></form>'
+    )
+    history = "".join(
+        f'<li><strong>{_esc(_SAMPLE_NAMES[i])}</strong> {_esc(t["perm_events"][i])} {_esc(modules[i % len(modules)])}'
+        f'<time class="kx-muted" style="display:block">{_esc(t["ago"][i])}</time></li>' for i in range(5))
+    content = (
+        _crumbs(t, [t["settings"], t["permissions"]])
+        + _pagehead(t["permissions"], t["mfa_hint"])
+        + f'<p class="kx-card kx-muted" role="note">{_esc(t["perm_rule"])}</p>'
+        + '<section class="kx-card">'
+        + _tabs(t["permissions"], [("r", t["by_role"]), ("u", t["by_user"]), ("h", t["history"])],
+                {"r": by_role, "u": by_user, "h": f'<ol class="kx-timeline">{history}</ol>'})
+        + '</section>'
+        + _dialog("kx-revoke", t["revoke_title"], t["revoke_text"], t["revoke"], t["cancel"], "revoke")
+    )
+    components = ["Sidebar", "Navbar", "Breadcrumbs", "Tabs", "DataTable", "Checkbox", "Select", "Badge", "TextArea", "Button", "Modal"]
+    return _shell(t, app, opts, len(opts["modulos"]) - 1, content), components
+
+
 def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = "es",
                 options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if screen not in SCREEN_TYPES:
@@ -1016,6 +1144,9 @@ def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = 
     elif screen == "detail":
         body, components = _detail(t, app_name, opts)
         title = opts["entidad"]
+    elif screen == "permissions":
+        body, components = _permissions(t, app_name, opts)
+        title = t["permissions"]
     else:
         body, components = _settings(t, app_name, opts, lang)
         title = t["settings"]
@@ -1024,7 +1155,7 @@ def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = 
         "pantalla": screen,
         "idioma": lang,
         "componentes_usados": components,
-        "opciones_aplicadas": {k: opts[k] for k in ("entidad", "entidad_plural", "modulos", "multiempresa")}
+        "opciones_aplicadas": {k: opts[k] for k in ("entidad", "entidad_plural", "modulos", "modulos_permitidos", "multiempresa")}
                               | {"campos": [f["nombre"] for f in opts["campos"]],
                                  "columnas": [c["nombre"] for c in opts["columnas"]]},
         "funcionalidades": FEATURES[screen],
@@ -1034,7 +1165,8 @@ def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = 
 
 
 _SHELL_FEATURES = ["barra lateral contraíble (menú móvil)", "búsqueda global con atajo /", "tema claro/oscuro persistente",
-                   "notificaciones", "menú de usuario", "migas de pan", "selector de empresa (multiempresa)"]
+                   "notificaciones", "menú de usuario", "migas de pan", "selector de empresa (multiempresa)",
+                   "menú filtrado por permisos (modulos_permitidos)"]
 FEATURES: Dict[str, List[str]] = {
     "login": ["diseño dividido con panel de marca", "mostrar u ocultar contraseña", "recordarme", "recuperar contraseña",
               "validación accesible en línea"],
@@ -1048,4 +1180,7 @@ FEATURES: Dict[str, List[str]] = {
     "detail": [*_SHELL_FEATURES, "pestañas con teclado", "lista de atributos", "historial", "editar y eliminar con confirmación"],
     "settings": [*_SHELL_FEATURES, "pestañas perfil/seguridad/notificaciones/apariencia", "interruptores accesibles",
                  "verificación en dos pasos", "idioma"],
+    "permissions": [*_SHELL_FEATURES, "matriz opción × evento por rol", "rol, concesiones y restricciones por usuario",
+                    "permisos efectivos con su origen", "motivo obligatorio y vigencia", "revocación con confirmación",
+                    "historial de asignaciones y revocaciones"],
 }

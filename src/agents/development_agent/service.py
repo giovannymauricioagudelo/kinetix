@@ -91,9 +91,22 @@ class VectorService:
         self._repo.save(record)
         return {"id_analisis": record.id_analisis, "objetivo": target, "fecha": iso(record.fecha), **result}
 
+    @property
+    def app_repository(self) -> bool:
+        """Repositorio de una aplicación de la fábrica: sus rutas deben declarar permiso (permisos-por-empresa.mdc)."""
+        return (Path(self._git.path) / "kinetix.json").is_file()
+
+    def _analyze(self, sources: Dict[str, str]) -> Dict[str, Any]:
+        """En repositorios de aplicaciones exige permiso en cada ruta y el esquema completo en cada opción del catálogo."""
+        if not self.app_repository:
+            return analyzer.analyze_files(sources)
+        catalog = Path(self._git.path) / analyzer.PERMISSIONS_CATALOG
+        text = catalog.read_text(encoding="utf-8-sig") if catalog.is_file() else None
+        return analyzer.analyze_files(sources, exigir_permisos=True, catalogo=text)
+
     def analyze_paths(self, actor: str, rutas: List[str], solo_versionados: bool = True) -> Dict[str, Any]:
-        sources = self._collect(rutas, solo_versionados)
-        return self._record(actor, ", ".join(rutas or ["src"]), analyzer.analyze_files(sources))
+        result = self._analyze(self._collect(rutas, solo_versionados))
+        return self._record(actor, ", ".join(rutas or ["src"]), result)
 
     def analyze_code(self, actor: str, codigo: str, nombre: str = "fragmento.py") -> Dict[str, Any]:
         if not SNIPPET_NAME.match(nombre or ""):
@@ -116,7 +129,7 @@ class VectorService:
 
     def security_gate(self, rutas: Optional[List[str]] = None) -> Dict[str, Any]:
         """Hallazgos críticos en el código del repositorio (usado por la compuerta de calidad de Prism)."""
-        result = analyzer.analyze_files(self._collect(rutas or ["src"]))
+        result = self._analyze(self._collect(rutas or ["src"]))
         criticals = [f for f in result["hallazgos"] if f["severidad"] == "critica"]
         return {"puntuacion": result["puntuacion"], "criticos": len(criticals), "hallazgos_criticos": criticals[:20],
                 "por_severidad": result["por_severidad"]}

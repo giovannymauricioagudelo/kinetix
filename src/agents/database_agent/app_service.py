@@ -37,10 +37,12 @@ from src.agents.database_agent.app_templates import (
     canonical,
     definition_table,
     engine_warnings,
+    migration_tables,
     render,
     table_definition,
     validate_script,
 )
+from src.agents.database_agent import permission_template
 from src.agents.database_agent.database_agent import ColumnDefinition, ColumnType, TableDefinition
 from src.agents.database_agent.datastores import copy_table
 from src.agents.database_agent.dialects import MOTORES, get_dialect
@@ -218,11 +220,32 @@ class NexusAppService:
                                         script=render(base_definition(rls), motor), checksum=checksum(definition),
                                         descripcion="Catálogo de empresas y filtro de seguridad por fila",
                                         creado_por=actor, fecha_creacion=now, definicion=definition))
+        migrations.append(self._permissions_migration(app, actor, now))
         if not self._registry.create_app(app, databases, migrations):
             raise ConflictError(f"La aplicación {app_id} o su base ya están registradas")
         for company in companies:
             self.add_company(actor, owner, app_id, company)
         return self.get_app(owner, app_id)
+
+    def _permissions_migration(self, app: Application, actor: str, now) -> Migration:
+        definition = permission_template.definition(app.modelo_datos == "multiempresa", self._rls(app))
+        definition_json = canonical(definition)
+        return Migration(id_aplicacion=app.id_aplicacion, nombre=permission_template.PERMISSIONS_MIGRATION, tipo="base",
+                         script=render(definition, app.motor), checksum=checksum(definition_json),
+                         descripcion="Permisos por empresa, rol y usuario: catálogo de opciones y eventos, roles, "
+                                     "concesiones, restricciones e historial (permisos-por-empresa.mdc)",
+                         creado_por=actor, fecha_creacion=now, definicion=definition_json)
+
+    def attach_permissions(self, actor: str, owner: str, id_aplicacion: str) -> Dict[str, Any]:
+        """Agrega la plantilla de permisos a una aplicación registrada antes de la regla permisos-por-empresa."""
+        app = self._get(id_aplicacion, owner)
+        self._ensure_no_change(app)
+        if any(m.nombre == permission_template.PERMISSIONS_MIGRATION
+               for m in self._registry.migrations(app.id_aplicacion, with_script=False)):
+            raise ConflictError(f"{app.id_aplicacion} ya tiene la plantilla de permisos")
+        migration = self._add(app, self._permissions_migration(app, actor, self._clock()))
+        return {"migracion": self._migration_view(migration), "procedimientos": list(permission_template.PROCEDURE_NAMES),
+                "tablas": list(permission_template.TABLE_NAMES)}
 
     def list_apps(self, owner: str) -> Dict[str, Any]:
         apps = self._registry.list_apps(owner)
@@ -546,7 +569,7 @@ class NexusAppService:
                                     "las tablas que ya tengan filas no se vuelven a copiar (vacíalas antes)")
                 else:
                     blockers.append(f"La base {db.nombre_base} ya existe en {target.nombre} y no la gestiona Nexus")
-        tables = [definition_table(json.loads(m.definicion)) for m in migrations if m.tipo == "tabla" and m.definicion]
+        tables = [t for m in migrations if m.definicion for t in migration_tables(json.loads(m.definicion))]
         manual = [m for m in migrations if not self._portable(m)]
         warnings.extend(engine_warnings(motor, app.modelo_datos == "multiempresa", app.seguridad_por_fila))
         if manual:
@@ -613,9 +636,9 @@ class NexusAppService:
         source, target = self._servers.get(change.conexion_origen), self._servers.get(change.conexion_destino)
         if source.datos is None or target.datos is None:
             raise InvalidInputError(f"La conexión {source.nombre if source.datos is None else target.nombre} no permite copiar datos")
-        tables = [(m.numero, definition_table(json.loads(m.definicion)))
-                  for m in self._registry.migrations(change.id_aplicacion)
-                  if m.tipo == "tabla" and m.definicion and m.numero <= change.version_origen]
+        tables = [(m.numero, table) for m in self._registry.migrations(change.id_aplicacion)
+                  if m.definicion and m.numero <= change.version_origen
+                  for table in migration_tables(json.loads(m.definicion))]
         results = []
         for name, origin in sorted(change.bases_origen.items()):
             for numero, table in tables:
