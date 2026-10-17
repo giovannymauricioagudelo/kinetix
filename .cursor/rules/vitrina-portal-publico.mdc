@@ -1,0 +1,49 @@
+---
+description: Estándares de vitrina/portal público inmobiliario (fábrica y apps generadas)
+alwaysApply: true
+---
+
+# Vitrina / portal público de inmuebles
+
+Aplica a **kinetix-studio** (Aurora, Vector, Synapse, Nexus) y a **toda aplicación generada** que exponga un portal o vitrina anónima de inmuebles (como Llavia `/p/{slug}`).
+
+## Propósito
+
+El visitante anónimo ve publicaciones vigentes, filtra por tipo y ubicación, abre una ficha, marca favoritos/selección, pide información o un resumen por correo, y puede entrar a la aplicación (registro/ingreso) sin que ese acceso ahogue la marca de la agencia.
+
+## Diseño visual (Aurora)
+
+- Composición profesional de listado inmobiliario a nivel mundial: cabecera de agencia, filtros, rejilla de tarjetas, ficha con galería y datos, pie con contacto. Una sola idea visual clara; sin dashboard ni “AI purple”.
+- **Branding de la empresa primero:** logo, colores, tipografía, encabezado y pie del diseño de marca predeterminado (Nexus grupo marca / Aurora). Si no hay marca, tipografía expresiva propia (no Inter/Roboto/Arial/system) y paleta propia de la app.
+- Tipografía y contraste WCAG 2.1 AA. Mobile-first. Sin copiar marcas, plantillas o assets con derechos de terceros: diseño original o assets propios/licencia libre.
+- Acceso a la aplicación (Crear cuenta / Ingresar) **visible y práctico** (barra o CTA fijo), sin competir con el nombre/logo de la agencia.
+
+## Capacidades mínimas
+
+| Capacidad | Detalle |
+| --- | --- |
+| Tipos de inmueble | Filtro y etiquetas: apartamento, casa, local, oficina, bodega, lote, habitación, etc. |
+| Listado | Tarjetas con foto (o placeholder), precio, zona, tipología, métricas clave, favorito |
+| Ficha | Galería, características, descripción comercial, mapa diferido, CTA contacto y favorito |
+| Encabezado / pie | Título, lema, logo; pie con texto legal genérico y enlaces de la marca |
+| Contacto intermediario | Teléfono, correo, WhatsApp públicos (solo datos que la agencia publique) |
+| Solicitud de información | Formulario en ficha (nombre, correo, teléfono, mensaje) con rate limit y auditoría |
+| Favoritos / selección | Anónimos por token; tope; resumen por correo |
+| Anti-abuso | Rate limit, solo campos `publico`, sin datos del propietario |
+
+## API y seguridad (Synapse / Sentinel)
+
+- Rutas bajo `/api/v1/portal/...` con `# permisos: publico` (salvo config de agencia con `requiere("portal", …)`).
+- Solo procedimientos almacenados; sin SQL de datos en línea.
+- No revelar existencia de empresas privadas ante slug inválido (404 uniforme).
+
+## Datos (Nexus)
+
+- Reutilizar publicación, visibilidad y marca; tablas propias de portal/selección/envío/solicitud de contacto según ADR de la app.
+- El rol de aplicación solo `EXECUTE`.
+
+## Verificación (Prism)
+
+- E2E visitante sin login: listado, ficha, marcar, solicitud/resumen, enlaces a registro/ingreso.
+- Branding: CSS variables del diseño predeterminado aplicadas en la vitrina.
+- CI: `ruta_sin_permiso` acepta `# permisos: publico`.
