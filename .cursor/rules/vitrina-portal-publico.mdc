@@ -24,7 +24,7 @@ El visitante anónimo ve publicaciones vigentes, filtra por tipo y ubicación, a
 | --- | --- |
 | Tipos de inmueble | Filtro y etiquetas: apartamento, casa, local, oficina, bodega, lote, habitación, etc. |
 | Listado | Tarjetas con foto (o placeholder), precio, zona, tipología, métricas clave, favorito |
-| Ficha | Galería, características, descripción comercial, mapa diferido, CTA contacto y favorito |
+| Ficha | Galería multi-imagen (portada + miniaturas), características, descripción comercial, mapa diferido con georreferencia aproximada (OpenStreetMap u open data), CTA contacto y favorito. Sin dirección exacta en portal anónimo. |
 | Encabezado / pie | Título, lema, logo; pie con texto legal genérico y enlaces de la marca |
 | Contacto intermediario | Teléfono, correo, WhatsApp públicos (solo datos que la agencia publique) |
 | Solicitud de información | Formulario en ficha (nombre, correo, teléfono, mensaje) con rate limit y auditoría |
