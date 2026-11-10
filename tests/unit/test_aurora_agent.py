@@ -106,6 +106,7 @@ def test_exports_layouts_and_screens(aurora):
     ("settings", ('role="switch"', 'id="s-idioma"')),
     ("permissions", ('id="p-rol"', 'aria-label="Panel: Acceder"', 'id="p-motivo"', 'id="kx-revoke"', "Restricción",
                      "(rol + concesiones) − restricciones")),
+    ("licenses", ("Suscripción y licencias", "Usuarios (asientos)", "Módulos incluidos", "Mejorar plan")),
 ])
 def test_screens_use_the_app_shell_and_add_functionality(aurora, tipo, esperado):
     sid = aurora.create_system("ana", "gio", {"nombre": f"S-{tipo}"})["id_sistema"]

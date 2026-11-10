@@ -395,6 +395,28 @@ def attach_application_permissions(
         return _ok(result)
 
 
+@router.post("/aplicaciones/{id_aplicacion}/licencias", status_code=201)
+def attach_application_licenses(
+    id_aplicacion: str,
+    request: Request,
+    principal: Principal = Depends(_can_manage_apps),
+    apps: NexusAppService = Depends(get_nexus_apps_service),
+    security: SecurityService = Depends(get_security_service),
+) -> Dict[str, Any]:
+    """Agrega la plantilla de licencias (asientos y/o módulos) a una aplicación registrada antes de la regla."""
+    with translate_errors(UNAVAILABLE):
+        result = apps.attach_licenses(principal.nombre_usuario, principal.id_empresa, id_aplicacion)
+        migration = result["migracion"]
+        security.record_audit(
+            principal,
+            "nexus_plantilla_licencias",
+            f"aplicacion:{id_aplicacion}",
+            f"{migration['numero']} {migration['nombre']} sha256 {migration['checksum']}",
+            ip=_ip(request),
+        )
+        return _ok(result)
+
+
 @router.get("/aplicaciones/{id_aplicacion}/migraciones/{numero}")
 def application_migration(id_aplicacion: str, numero: int, principal: Principal = Depends(_can_view_apps),
                           apps: NexusAppService = Depends(get_nexus_apps_service)) -> Dict[str, Any]:

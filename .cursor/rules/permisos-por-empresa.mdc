@@ -7,6 +7,8 @@ alwaysApply: true
 
 Regla obligatoria para **toda aplicación generada por la fábrica** (Llavia y las siguientes). Cada opción de la aplicación y cada evento sobre ella (entrar, consultar, ingresar, actualizar, borrar, enviar…) se autoriza con permisos que se administran **por empresa**, se definen **por rol** y se ajustan **por usuario**.
 
+La monetización (asientos y/o módulos) es otra capa fundamental: ver `licencias-por-empresa.mdc`. Permiso RBAC ≠ licencia del tenant.
+
 ## Modelo
 
 - **Opción** (`opcion_aplicacion`): pantalla o módulo con código, nombre, ruta, ícono, orden y opción padre; arma el menú.

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.agents.interface_design_agent.design import DesignError
 from src.agents.interface_design_agent.exporters import to_css
 
-SCREEN_TYPES = ("login", "dashboard", "list", "form", "detail", "settings", "permissions")
+SCREEN_TYPES = ("login", "dashboard", "list", "form", "detail", "settings", "permissions", "licenses")
 LANGUAGES = ("es", "en", "pt")
 FIELD_TYPES = ("text", "email", "number", "date", "tel", "select", "textarea", "checkbox")
 FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -155,6 +155,8 @@ _TEXTS: Dict[str, Dict[str, Any]] = {
 _PERMISSION_TEXTS: Dict[str, Dict[str, Any]] = {
     "es": {
         "permissions": "Permisos", "by_role": "Por rol", "by_user": "Por usuario", "role": "Rol", "option": "Opción",
+        "licenses": "Suscripción y licencias", "seats": "Usuarios (asientos)", "modules": "Módulos incluidos",
+        "plan": "Plan", "improve_plan": "Mejorar plan", "seat_usage": "En uso / cupo",
         "origin": "Origen", "from_role": "Rol", "concession": "Concesión", "restriction": "Restricción",
         "grant": "Conceder", "restrict": "Restringir", "revoke": "Revocar", "reason": "Motivo", "valid_until": "Vigente hasta",
         "type": "Tipo", "event": "Evento", "effective": "Permisos efectivos", "new_role": "Nuevo rol",
@@ -170,6 +172,8 @@ _PERMISSION_TEXTS: Dict[str, Dict[str, Any]] = {
     },
     "en": {
         "permissions": "Permissions", "by_role": "By role", "by_user": "By user", "role": "Role", "option": "Option",
+        "licenses": "Subscription & licenses", "seats": "Users (seats)", "modules": "Included modules",
+        "plan": "Plan", "improve_plan": "Upgrade plan", "seat_usage": "Used / quota",
         "origin": "Origin", "from_role": "Role", "concession": "Grant", "restriction": "Restriction",
         "grant": "Grant", "restrict": "Restrict", "revoke": "Revoke", "reason": "Reason", "valid_until": "Valid until",
         "type": "Type", "event": "Event", "effective": "Effective permissions", "new_role": "New role",
@@ -185,6 +189,8 @@ _PERMISSION_TEXTS: Dict[str, Dict[str, Any]] = {
     },
     "pt": {
         "permissions": "Permissões", "by_role": "Por perfil", "by_user": "Por usuário", "role": "Perfil", "option": "Opção",
+        "licenses": "Assinatura e licenças", "seats": "Usuários (assentos)", "modules": "Módulos incluídos",
+        "plan": "Plano", "improve_plan": "Melhorar plano", "seat_usage": "Em uso / cota",
         "origin": "Origem", "from_role": "Perfil", "concession": "Concessão", "restriction": "Restrição",
         "grant": "Conceder", "restrict": "Restringir", "revoke": "Revogar", "reason": "Motivo", "valid_until": "Válido até",
         "type": "Tipo", "event": "Evento", "effective": "Permissões efetivas", "new_role": "Novo perfil",
@@ -1121,6 +1127,32 @@ def _permissions(t, app, opts):
     return _shell(t, app, opts, len(opts["modulos"]) - 1, content), components
 
 
+def _licenses(t, app, opts):
+    """Suscripción y licencias: asientos de usuario y módulos incluidos en el plan."""
+    modules = [
+        ("contratos", True), ("mensajeria", True), ("destacados", True),
+        ("ia", False), ("reportes", True), ("integraciones", False),
+    ]
+    rows = "".join(
+        f'<li class="kx-list-row"><strong>{_esc(code)}</strong>'
+        f'<span class="kx-badge kx-badge--{"active" if on else "inactive"}">'
+        f'{_esc(t["modules"] if on else t["improve_plan"])}</span></li>'
+        for code, on in modules
+    )
+    content = (
+        _crumbs(t, [t["settings"], t["licenses"]])
+        + _pagehead(t["licenses"], t.get("mfa_hint", ""))
+        + '<section class="kx-card">'
+        f'<dl class="kx-defs"><div><dt>{_esc(t["plan"])}</dt><dd>Profesional</dd></div>'
+        f'<div><dt>{_esc(t["seats"])}</dt><dd>{_esc(t["seat_usage"])}: 4 / 10</dd></div></dl>'
+        f'<h2>{_esc(t["modules"])}</h2><ul class="kx-list">{rows}</ul>'
+        f'<div class="kx-dialog-actions"><button class="kx-btn" type="button">{_esc(t["improve_plan"])}</button></div>'
+        + '</section>'
+    )
+    components = ["Sidebar", "Navbar", "Breadcrumbs", "Card", "Badge", "Button", "DefinitionList"]
+    return _shell(t, app, opts, len(opts["modulos"]) - 1, content), components
+
+
 def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = "es",
                 options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if screen not in SCREEN_TYPES:
@@ -1147,6 +1179,9 @@ def screen_html(tokens: Dict[str, Any], screen: str, app_name: str, lang: str = 
     elif screen == "permissions":
         body, components = _permissions(t, app_name, opts)
         title = t["permissions"]
+    elif screen == "licenses":
+        body, components = _licenses(t, app_name, opts)
+        title = t["licenses"]
     else:
         body, components = _settings(t, app_name, opts, lang)
         title = t["settings"]
@@ -1183,4 +1218,6 @@ FEATURES: Dict[str, List[str]] = {
     "permissions": [*_SHELL_FEATURES, "matriz opción × evento por rol", "rol, concesiones y restricciones por usuario",
                     "permisos efectivos con su origen", "motivo obligatorio y vigencia", "revocación con confirmación",
                     "historial de asignaciones y revocaciones"],
+    "licenses": [*_SHELL_FEATURES, "plan y estado de suscripción", "asientos de usuario usados/cupo",
+                 "módulos incluidos vs no incluidos", "CTA mejorar plan"],
 }

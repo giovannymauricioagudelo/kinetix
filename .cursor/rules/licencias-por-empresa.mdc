@@ -1,0 +1,49 @@
+---
+description: Licencias por empresa (asientos de usuario y/o módulos) como base de monetización en la fábrica y todas sus aplicaciones
+alwaysApply: true
+---
+
+# Licencias por empresa (usuarios y/o funcionalidad)
+
+Regla obligatoria para **toda aplicación generada por la fábrica**. La monetización se apoya en una **licencia del tenant**: cupo de usuarios (asientos) y/o módulos de funcionalidad. El permiso RBAC responde «¿puede este usuario?»; la licencia responde «¿el tenant pagó / tiene cupo?». Ambos deben cumplirse.
+
+## Modelo
+
+- **Plan** (`plan_suscripcion`): catálogo con precio, prueba y `funciones` (JSON de módulos, p. ej. `{"contratos": true, "ia": false}`).
+- **Límite** (`limite_plan`): cupos por recurso; el fundamental es `usuarios` (asientos). Otros (`almacenamiento_mb`, `consultas_ia`, `mensajes_whatsapp`, `registros_activos`) son extensibles por dominio.
+- **Suscripción** (`suscripcion`): plan vigente del tenant, estado (`prueba` / `activa` / `en_gracia` / `solo_lectura` / …) y overrides `limites_personalizados` / `funciones_personalizadas`.
+- **Módulos estándar**: `contratos`, `mensajeria`, `destacados`, `ia`, `reportes`, `integraciones`. Cada app puede ampliar el JSON.
+
+## Reglas de enforcement
+
+- `br_lic_001`: no invitar / alta de rol de equipo si `usados + pendientes ≥ cupo usuarios` (salvo `es_ilimitado`).
+- `br_lic_002`: usar un módulo exige que esté en la licencia efectiva (plan + personalización).
+- `br_lic_003`: altas de asientos y módulos de pago solo con suscripción en `prueba` / `activa` / `en_gracia`.
+
+## Base de datos (Nexus)
+
+- Nexus agrega la plantilla `licencias_por_empresa` a toda aplicación al registrarla (junto a `permisos_por_empresa`) y la adjunta a las ya registradas con `POST /api/v1/nexus/aplicaciones/{id}/licencias`.
+- Procedimientos `app.licencia_*` (SQL Server; acceso solo por procedimientos): `resumen`, `assert_asiento`, `assert_modulo`, `personalizar`. Errores propios: 52101–52199.
+- En multiempresa las tablas llevan `id_empresa` y seguridad por fila.
+
+## API (Vector y Sentinel)
+
+- Tras `requiere(opcion, evento)`, las rutas de módulos de pago llaman `assert_modulo` / `app.licencia_assert_modulo`.
+- Las altas de usuarios/invitaciones de roles de equipo llaman `assert_asiento` / `app.licencia_assert_asiento`.
+- Endpoints de lectura: resumen de licencia en la opción `suscripcion` (`acceder` / `consultar`); personalización sensible con `actualizar` + MFA reciente (ops / super administrador según la app).
+
+## Interfaz (Aurora)
+
+- Pantalla **Suscripción / licencias** (`/suscripcion`): estado del plan, asientos usados/cupo y módulos incluidos.
+- El menú solo muestra la opción con permiso `suscripcion.acceder`.
+
+## Opciones nuevas y catálogo
+
+- Toda app declara la opción `suscripcion` en `security/permisos_catalogo.json` (la genera `permission_template.catalogo_base` / `license_template.catalogo_opcion`).
+- Se sincroniza con `app.permisos_sincronizar` en cada empresa.
+
+## Verificación (Prism)
+
+- Cupo de asientos: invitar al tope responde 422 con `br_lic_001` (o THROW 52102).
+- Módulo no incluido: 422 con `br_lic_002` (o THROW 52103).
+- Suscripción `solo_lectura` / `suspendida`: bloquea altas (`br_lic_003` / 52101).

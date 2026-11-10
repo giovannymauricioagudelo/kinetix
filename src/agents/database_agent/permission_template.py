@@ -43,13 +43,20 @@ def definition(multi: bool, rls: bool) -> Dict[str, Any]:
 
 
 def catalogo_base(nombre_rol_admin: str = "Administrador") -> Dict[str, Any]:
-    """Catálogo mínimo de toda aplicación: eventos estándar, la opción de permisos y el rol administrador."""
+    """Catálogo mínimo: eventos, permisos, suscripción/licencias y rol administrador."""
+    from src.agents.database_agent import license_template
+
     eventos = [{"codigo": c, "nombre": n, "orden": i} for i, (c, n) in enumerate(EVENTOS_ESTANDAR, start=1)]
     opcion = {"codigo": ADMIN_OPTION, "nombre": "Permisos", "ruta": "/permisos", "icono": "permisos", "orden": 900,
               "es_menu": True, "eventos": list(EVENTOS_ADMINISTRACION), "eventos_mfa": list(EVENTOS_CON_MFA)}
-    admin = {"codigo": "administrador", "nombre": nombre_rol_admin, "descripcion": "Administra la empresa y sus permisos",
-             "permisos": [{"opcion": ADMIN_OPTION, "evento": e, "alcance": "empresa"} for e in EVENTOS_ADMINISTRACION]}
-    return {"eventos": eventos, "opciones": [opcion], "roles": [admin]}
+    opcion_lic = license_template.catalogo_opcion()
+    admin_permisos = (
+        [{"opcion": ADMIN_OPTION, "evento": e, "alcance": "empresa"} for e in EVENTOS_ADMINISTRACION]
+        + [{"opcion": opcion_lic["codigo"], "evento": e, "alcance": "empresa"} for e in opcion_lic["eventos"]]
+    )
+    admin = {"codigo": "administrador", "nombre": nombre_rol_admin, "descripcion": "Administra la empresa, permisos y licencias",
+             "permisos": admin_permisos}
+    return {"eventos": eventos, "opciones": [opcion, opcion_lic], "roles": [admin]}
 
 
 # ============================================================================ tablas portables

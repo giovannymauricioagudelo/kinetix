@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from src.agents.database_agent import permission_template
+from src.agents.database_agent import license_template, permission_template
 from src.agents.database_agent.database_agent import ColumnDefinition, ColumnType, TableDefinition, quote_identifier, sql_string
 from src.agents.database_agent.dialects import (
     MOTORES,
@@ -292,12 +292,24 @@ def _render_permissions(definition: Dict[str, Any], motor: str) -> str:
     return "GO\n".join(scripts)
 
 
+def _render_licenses(definition: Dict[str, Any], motor: str) -> str:
+    multi, rls = definition["multiempresa"], definition["seguridad_por_fila"]
+    scripts = [TABLE_RENDERERS[motor](table, multi, rls) for table in license_template.tables(multi)]
+    if motor == "mongodb":
+        return json.dumps([command for script in scripts for command in json.loads(script)], indent=2, ensure_ascii=False)
+    if motor in PROCEDURE_ENGINES:
+        scripts.extend(f"{batch}\n" for batch in license_template.sqlserver_extras(multi))
+    return "GO\n".join(scripts)
+
+
 def migration_tables(definition: Dict[str, Any]) -> List[TableDefinition]:
     """Tablas que crea una migración portable (las que se copian al cambiar de motor)."""
     if definition.get("tipo") == TABLE_KIND:
         return [definition_table(definition)]
     if definition.get("tipo") == permission_template.PERMISSIONS_KIND:
         return permission_template.tables(definition["multiempresa"])
+    if definition.get("tipo") == license_template.LICENSES_KIND:
+        return license_template.tables(definition["multiempresa"])
     return []
 
 
@@ -305,6 +317,8 @@ def render(definition: Dict[str, Any], motor: str) -> str:
     """Script de la definición neutral para el motor; ValueError si el motor no admite algo de la tabla."""
     if definition["tipo"] == permission_template.PERMISSIONS_KIND:
         return _render_permissions(definition, motor)
+    if definition["tipo"] == license_template.LICENSES_KIND:
+        return _render_licenses(definition, motor)
     procedures = with_procedures(definition) and motor in PROCEDURE_ENGINES
     if definition["tipo"] == BASE_KIND:
         script = BASE_RENDERERS[motor]()

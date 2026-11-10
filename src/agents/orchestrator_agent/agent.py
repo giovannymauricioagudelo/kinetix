@@ -495,7 +495,8 @@ DEFAULT_ACTIONS: Dict[str, str] = {
 }
 PERMISSIONS_ACTIONS: Dict[str, str] = {
     NEXUS.codename: ("Mantener la plantilla de permisos por empresa (opciones, eventos, roles, concesiones, "
-                     "restricciones e historial) y el catálogo de la aplicación sincronizado con app.permisos_sincronizar."),
+                     "restricciones e historial) y el catálogo de la aplicación sincronizado con app.permisos_sincronizar; "
+                     "mantener la plantilla de licencias (planes, asientos y módulos) con app.licencia_*."),
     VECTOR.codename: ("Exigir en cada ruta el permiso efectivo (opción + evento) del usuario en su empresa, exponer la "
                       "administración de permisos por rol, usuario y combinación con MFA reciente y auditar cada cambio."),
     AURORA.codename: ("Armar el menú con las opciones donde el usuario puede acceder, mostrar acciones según los eventos "
@@ -516,12 +517,15 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
                          "y desplegar tablas y migraciones según ese modelo. Las tablas quedan en formato portable para "
                          "poder cambiar de motor si la aplicación escala. Cada tabla trae sus procedimientos almacenados "
                          "y la aplicación se conecta con un rol de solo EXECUTE. Incluye la plantilla de permisos por "
-                         "empresa, rol y usuario con su historial."),
+                         "empresa, rol y usuario con su historial, y la plantilla de licencias (asientos y/o módulos) "
+                         "para monetizar."),
         AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación filtrada por permisos, "
-                          "tablero, listados con filtros y exportación, formularios por secciones, detalle, configuración "
-                          "y administración de permisos."),
+                          "tablero, listados con filtros y exportación, formularios por secciones, detalle, configuración, "
+                          "administración de permisos y suscripción/licencias (asientos y módulos)."),
         VECTOR.codename: ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente, e "
-                          "implementar allí los diseños aprobados; nada de la aplicación se guarda en kinetix-studio."),
+                          "implementar allí los diseños aprobados; nada de la aplicación se guarda en kinetix-studio. "
+                          "Toda ruta de módulo de pago exige licencia además del permiso RBAC; las altas de equipo "
+                          "respetan el cupo de asientos."),
     },
     RequestType.SCALE: {
         NEXUS.codename: "Analizar consultas lentas; proponer índices, particionamiento y pools de conexión.",
@@ -674,9 +678,10 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
                 (SENTINEL, DEFAULT_ACTIONS[SENTINEL.codename]),
                 (VECTOR, "Crear en el repositorio de {aplicacion} el esqueleto del proyecto (clean architecture) con "
                          "autenticación integrada, repositorios que solo llaman procedimientos almacenados, permisos "
-                         "efectivos por opción y evento en cada ruta, catálogo de permisos y CI."),
+                         "efectivos por opción y evento en cada ruta, catálogo de permisos, enforcement de licencia "
+                         "(asientos y módulos) y CI."),
                 (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI, incluida la prueba de que ninguna "
-                        "ruta queda sin permiso.")))]
+                        "ruta queda sin permiso y las de cupo de asientos / módulo no licenciado.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):
             specs.append(COMPLIANCE_SPRINT)

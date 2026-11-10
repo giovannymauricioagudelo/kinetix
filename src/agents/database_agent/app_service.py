@@ -42,7 +42,7 @@ from src.agents.database_agent.app_templates import (
     table_definition,
     validate_script,
 )
-from src.agents.database_agent import permission_template
+from src.agents.database_agent import license_template, permission_template
 from src.agents.database_agent.database_agent import ColumnDefinition, ColumnType, TableDefinition
 from src.agents.database_agent.datastores import copy_table
 from src.agents.database_agent.dialects import MOTORES, get_dialect
@@ -221,6 +221,7 @@ class NexusAppService:
                                         descripcion="Catálogo de empresas y filtro de seguridad por fila",
                                         creado_por=actor, fecha_creacion=now, definicion=definition))
         migrations.append(self._permissions_migration(app, actor, now))
+        migrations.append(self._licenses_migration(app, actor, now))
         if not self._registry.create_app(app, databases, migrations):
             raise ConflictError(f"La aplicación {app_id} o su base ya están registradas")
         for company in companies:
@@ -236,6 +237,22 @@ class NexusAppService:
                                      "concesiones, restricciones e historial (permisos-por-empresa.mdc)",
                          creado_por=actor, fecha_creacion=now, definicion=definition_json)
 
+    def _licenses_migration(self, app: Application, actor: str, now) -> Migration:
+        definition = license_template.definition(app.modelo_datos == "multiempresa", self._rls(app))
+        definition_json = canonical(definition)
+        return Migration(
+            id_aplicacion=app.id_aplicacion,
+            nombre=license_template.LICENSES_MIGRATION,
+            tipo="base",
+            script=render(definition, app.motor),
+            checksum=checksum(definition_json),
+            descripcion="Licencias por empresa: planes, asientos de usuario y módulos monetizables "
+                        "(licencias-por-empresa.mdc)",
+            creado_por=actor,
+            fecha_creacion=now,
+            definicion=definition_json,
+        )
+
     def attach_permissions(self, actor: str, owner: str, id_aplicacion: str) -> Dict[str, Any]:
         """Agrega la plantilla de permisos a una aplicación registrada antes de la regla permisos-por-empresa."""
         app = self._get(id_aplicacion, owner)
@@ -246,6 +263,24 @@ class NexusAppService:
         migration = self._add(app, self._permissions_migration(app, actor, self._clock()))
         return {"migracion": self._migration_view(migration), "procedimientos": list(permission_template.PROCEDURE_NAMES),
                 "tablas": list(permission_template.TABLE_NAMES)}
+
+    def attach_licenses(self, actor: str, owner: str, id_aplicacion: str) -> Dict[str, Any]:
+        """Agrega la plantilla de licencias a una aplicación registrada antes de la regla licencias-por-empresa."""
+        app = self._get(id_aplicacion, owner)
+        self._ensure_no_change(app)
+        if any(
+            m.nombre == license_template.LICENSES_MIGRATION
+            for m in self._registry.migrations(app.id_aplicacion, with_script=False)
+        ):
+            raise ConflictError(f"{app.id_aplicacion} ya tiene la plantilla de licencias")
+        migration = self._add(app, self._licenses_migration(app, actor, self._clock()))
+        return {
+            "migracion": self._migration_view(migration),
+            "procedimientos": list(license_template.PROCEDURE_NAMES),
+            "tablas": list(license_template.TABLE_NAMES),
+            "modulos": license_template.catalogo_modulos(),
+            "opcion_permisos": license_template.catalogo_opcion(),
+        }
 
     def list_apps(self, owner: str) -> Dict[str, Any]:
         apps = self._registry.list_apps(owner)
