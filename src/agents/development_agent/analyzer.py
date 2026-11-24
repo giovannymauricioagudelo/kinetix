@@ -20,7 +20,9 @@ MAX_PARAMS = 7
 
 _SECRET_NAME = re.compile(r"(?i)(password|passwd|pwd|secret|token|api_?key|clave|contrase(n|ñ)a|private_?key)")
 _SECRET_PLACEHOLDER = re.compile(
-    r"(?i)^(|x+|\*+|changeme|cambiar.*|tu_.*|your_.*|<.*>|\$\{.*\}|\{.*\}|%\(.*\)s|example|ejemplo|test.*|dummy|password|pass|secret|contrase(n|ñ)a)$"
+    r"(?i)^(|x+|\*+|changeme|cambi[ae]r?.*|tu_.*|your_.*|<.*>|\$\{.*\}|\{.*\}|%\(.*\)s|"
+    r"example|ejemplo|test.*|dummy|password|pass|secret|contrase(n|ñ)a|"
+    r"br_[a-z0-9_]+|\^.*\$)$"
 )
 _CONNECTION_SECRET = re.compile(r"(?i)\b(?:pwd|password)\s*=\s*([^;'\"\s][^;'\"]{2,})")
 _TODO = re.compile(r"#.*\b(TODO|FIXME|XXX|HACK)\b")
@@ -324,6 +326,28 @@ class _Visitor(ast.NodeVisitor):
         if isinstance(verify, ast.Constant) and verify.value is False:
             self.add(node, "tls_sin_verificar", "seguridad", "alta", "verify=False desactiva la validación TLS (OWASP A02)")
 
+    def _cors_abierto(self, node: ast.Call, name: str) -> None:
+        """CORS con origen '*' (sobre todo con credenciales) es inseguro en apps de la fábrica."""
+        if self.is_test or name.rsplit(".", 1)[-1] not in ("CORSMiddleware", "add_middleware"):
+            return
+        origins = _keyword(node, "allow_origins")
+        if origins is None and name.rsplit(".", 1)[-1] == "add_middleware" and node.args:
+            # add_middleware(CORSMiddleware, allow_origins=...)
+            if _dotted(node.args[0]).rsplit(".", 1)[-1] != "CORSMiddleware":
+                return
+            origins = _keyword(node, "allow_origins")
+        if not isinstance(origins, (ast.List, ast.Tuple)):
+            return
+        if not any(isinstance(elt, ast.Constant) and elt.value == "*" for elt in origins.elts):
+            return
+        creds = _keyword(node, "allow_credentials")
+        if _is_true(creds):
+            self.add(node, "cors_abierto", "seguridad", "critica",
+                     "CORS allow_origins=['*'] con allow_credentials=True (OWASP A05); usa orígenes explícitos")
+        else:
+            self.add(node, "cors_abierto", "seguridad", "alta",
+                     "CORS allow_origins=['*'] abre la API a cualquier origen; usa una lista explícita")
+
     def _sql_call(self, node: ast.Call, name: str) -> None:
         if name.rsplit(".", 1)[-1] not in ("execute", "executemany", "exec_driver_sql") or not node.args:
             return
@@ -351,6 +375,7 @@ class _Visitor(ast.NodeVisitor):
         name = _dotted(node.func)
         self._dangerous_call(node, name)
         self._network_call(node, name)
+        self._cors_abierto(node, name)
         self._sql_call(node, name)
         self._catalog_permission(node, name)
         self.generic_visit(node)

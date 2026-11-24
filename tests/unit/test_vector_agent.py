@@ -60,6 +60,23 @@ def get(cursor, uid):
     assert result["puntuacion"] == 10
 
 
+def test_analyzer_flags_open_cors_with_credentials():
+    risky = '''
+from fastapi.middleware.cors import CORSMiddleware
+
+def create_app(app):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+    )
+'''
+    result = analyzer.analyze_files({"src/api.py": risky})
+    assert "cors_abierto" in rules(result)
+    critico = next(f for f in result["hallazgos"] if f["regla"] == "cors_abierto")
+    assert critico["severidad"] == "critica"
+
+
 INLINE_SQL = '''
 LISTAR = "SELECT id, nombre FROM dbo.usuarios WHERE id_empresa = ?"
 

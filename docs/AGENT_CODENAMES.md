@@ -42,6 +42,14 @@ Regla de todas las aplicaciones de la fábrica (`.cursor/rules/permisos-por-empr
 - **Aurora.** Pantalla `permissions` (matriz por rol, ajustes por usuario con el origen de cada permiso, historial) y menú filtrado con `modulos_permitidos`.
 - **Cortex.** Sus planes reparten la regla entre Sentinel, Nexus, Vector, Aurora y Prism desde las fundaciones hasta la interfaz.
 
+## Seguridad por aplicación
+
+Regla de todas las aplicaciones (`.cursor/rules/seguridad-por-aplicacion.mdc`, checklist `src/agents/security_checklist.py`).
+
+- **Prácticas.** Auth, hash, HTTPS, claves API solo en servidor, validación servidor, XSS/CSRF, CORS, cabeceras, cookies, rate limit, archivos, pagos servidor, deps auditadas, secretos fuera de Git.
+- **Cortex.** Sprint `seguridad` obligatorio en apps nuevas media/alta (antes de `rendimiento`); tareas a Sentinel, Synapse, Nexus, Aurora, Vector, Orbit, Prism y Argus.
+- **Evidencia.** `docs/seguridad.md` con informe de protecciones probadas.
+
 ## Rendimiento por aplicación
 
 Regla de todas las aplicaciones (`.cursor/rules/rendimiento-por-aplicacion.mdc`, checklist `src/agents/performance_checklist.py`).

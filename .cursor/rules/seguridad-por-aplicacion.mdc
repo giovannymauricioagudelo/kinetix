@@ -1,0 +1,74 @@
+---
+description: Seguridad OWASP como base obligatoria de toda aplicación generada por la fábrica (anti vibe-coding inseguro)
+alwaysApply: true
+---
+
+# Seguridad por aplicación
+
+Regla obligatoria para **toda aplicación generada por la fábrica**. El “vibe coding” no justifica saltarse controles: cada app nace con autenticación, secretos fuera del cliente, HTTPS y las demás prácticas de esta regla. Checklist canónico: `src/agents/security_checklist.py`.
+
+## Objetivos (Prism)
+
+| Control | Exigencia |
+| --- | --- |
+| Autenticación | Login con sesión; MFA en roles sensibles |
+| Contraseñas | Hash bcrypt/argon2; nunca en claro |
+| Claves API | Solo servidor; nunca `VITE_*` / `NEXT_PUBLIC_*` con secretos |
+| HTTPS | Obligatorio fuera de local; HSTS en prod |
+| Validación | Siempre en servidor |
+| XSS / CSRF | Escapado + CSP; CSRF según modelo de sesión |
+| CORS | Orígenes explícitos; no `*` con credenciales |
+| Cabeceras | CSP, nosniff, frame deny, referrer, permissions |
+| Cookies | HttpOnly + Secure + SameSite para tokens de sesión |
+| Rate limit | Auth, registro, formularios públicos, webhooks |
+| Archivos | Tipo, tamaño, magic bytes; sin path traversal |
+| Pagos | Solo servidor; webhooks firmados |
+| Dependencias | Auditoría en CI sin críticas abiertas |
+| Secretos en Git | `.env` ignorado; sin credenciales en el historial |
+
+Evidencia: `docs/seguridad.md` (controles, pruebas, residuales).
+
+## Quién valida qué
+
+| Práctica | Agente |
+| --- | --- |
+| Autenticación, hash, cookies de sesión, MFA | Sentinel |
+| HTTPS, CORS, rate limit, cabeceras, claves API en servidor | Synapse |
+| Validación servidor, XSS, CSRF, archivos, pagos servidor | Vector |
+| UI sin secretos / sin HTML crudo | Aurora |
+| Datos sin contraseñas en claro, RLS, solo procedimientos | Nexus |
+| Secretos fuera de Git, deps en CI, HTTPS en despliegue | Orbit |
+| Pruebas de protecciones e informe | Prism |
+| Alertas 401/403/429 anómalos | Argus |
+
+## Cortex
+
+- Toda aplicación nueva de complejidad **media** o **alta** incluye el sprint `seguridad` (antes de `rendimiento`).
+- Tareas: `security_checklist.sprint_tasks()`.
+- Fundaciones ya dejan auth + Sentinel; el sprint endurece OWASP y deja el informe de Prism.
+
+## Vector (análisis estático)
+
+Además de `ruta_sin_permiso`, `sql_en_linea` y `secreto_en_codigo`:
+
+- Rechazar `eval`/`exec`, `verify=False`, SQL interpolado, pickles inseguros.
+- CORS con origen `*` y credenciales es hallazgo crítico en revisión de código.
+
+## Prism
+
+- `approval = false` al cerrar el sprint de seguridad si falta `docs/seguridad.md` o falla un control crítico (auth rota, secreto en cliente, CORS abierto, secreto en Git).
+- Incluir prueba de cabeceras, rate limit 429, denegación sin permiso y webhook sin firma.
+
+## Verificación rápida
+
+- [ ] Auth + MFA sensible
+- [ ] Hash de contraseñas
+- [ ] Sin claves API en el navegador
+- [ ] HTTPS / HSTS (prod)
+- [ ] Validación servidor
+- [ ] XSS / CSRF / CORS / cabeceras / cookies
+- [ ] Rate limit
+- [ ] Archivos y pagos en servidor
+- [ ] Dependencias auditadas
+- [ ] Secretos fuera de Git
+- [ ] Informe en `docs/seguridad.md`

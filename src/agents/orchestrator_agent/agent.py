@@ -35,7 +35,7 @@ from src.agents.agent_catalog import (
     VECTOR,
     AgentProfile,
 )
-from src.agents import performance_checklist
+from src.agents import performance_checklist, security_checklist
 
 logger = logging.getLogger(__name__)
 
@@ -481,8 +481,9 @@ DEPENDENCIES: Dict[str, Tuple[AgentProfile, ...]] = {
 DEFAULT_ACTIONS: Dict[str, str] = {
     NEXUS.codename: "Diseñar o ajustar el modelo de datos, índices, migraciones y los procedimientos almacenados de acceso.",
     MATRIX.codename: "Traducir los requisitos en reglas de negocio validadas.",
-    SYNAPSE.codename: ("Definir contratos de API e integraciones externas; incluir compresión Brotli, cabeceras de caché, "
-                       "origen CDN y colas para trabajos lentos cuando aplique (rendimiento-por-aplicacion.mdc)."),
+    SYNAPSE.codename: ("Definir contratos de API e integraciones externas con CORS estricto, rate limit, HTTPS/HSTS y "
+                       "cabeceras de seguridad (seguridad-por-aplicacion.mdc); incluir compresión Brotli, CDN y colas "
+                       "cuando aplique (rendimiento-por-aplicacion.mdc)."),
     INSIGHT.codename: ("Diseñar reportes, KPIs y dashboards con caché o materialización de agregaciones pesadas "
                        "(rendimiento-por-aplicacion.mdc)."),
     AURORA.codename: ("Diseñar flujos de usuario, pantallas y componentes accesibles, con esqueletos de carga, imágenes "
@@ -496,9 +497,10 @@ DEFAULT_ACTIONS: Dict[str, str] = {
                     "de rendimiento lo exija."),
     SENTINEL.codename: ("Definir autenticación, roles y auditoría; exigir MFA a los roles sensibles; permisos por empresa "
                         "sobre cada opción y evento, definidos por rol y ajustados por usuario con concesiones y "
-                        "restricciones que no chocan, con historial (permisos-por-empresa.mdc)."),
-    ARGUS.codename: ("Configurar métricas OpenTelemetry (o equivalentes), sondas de salud y alertas de p95; verificar el "
-                    "SLA después del despliegue."),
+                        "restricciones que no chocan, con historial (permisos-por-empresa.mdc); contraseñas con hash y "
+                        "cookies de sesión HttpOnly/Secure/SameSite (seguridad-por-aplicacion.mdc)."),
+    ARGUS.codename: ("Configurar métricas OpenTelemetry (o equivalentes), sondas de salud y alertas de p95; alertar picos "
+                    "401/403/429; verificar el SLA después del despliegue."),
 }
 PERMISSIONS_ACTIONS: Dict[str, str] = {
     NEXUS.codename: ("Mantener la plantilla de permisos por empresa (opciones, eventos, roles, concesiones, "
@@ -657,6 +659,12 @@ COMPLIANCE_SPRINT: SprintSpec = (
         (MATRIX, "Convertir la normativa en reglas obligatorias con sus excepciones auditadas."),
         (SENTINEL, "Asegurar auditoría completa, retención de registros y MFA en roles sensibles."),
         (PRISM, "Auditoría de seguridad OWASP y verificación de los controles normativos.")))
+SECURITY_SPRINT: SprintSpec = (
+    "seguridad", "Seguridad OWASP",
+    "Endurecer autenticación, secretos, HTTPS, XSS/CSRF, CORS, cabeceras, rate limit y pagos (seguridad-por-aplicacion.mdc).",
+    security_checklist.exit_criteria(),
+    security_checklist.sprint_tasks(),
+)
 PERFORMANCE_SPRINT: SprintSpec = (
     "rendimiento", "Rendimiento y carga",
     "Garantizar percepción de velocidad y el volumen esperado (rendimiento-por-aplicacion.mdc).",
@@ -694,13 +702,14 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
                          "efectivos por opción y evento en cada ruta, catálogo de permisos, enforcement de licencia "
                          "(asientos y módulos), pool de conexiones y CI listo para métricas/OpenTelemetry."),
                 (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI, incluida la prueba de que ninguna "
-                        "ruta queda sin permiso, las de cupo de asientos / módulo no licenciado y el arnés de carga / "
-                        "móvil-red lenta del sprint de rendimiento.")))]
+                        "ruta queda sin permiso, las de cupo de asientos / módulo no licenciado, el arnés OWASP del "
+                        "sprint de seguridad y el de carga / móvil-red lenta del sprint de rendimiento.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):
             specs.append(COMPLIANCE_SPRINT)
-        # Rendimiento es fundamental en toda app media/alta (no solo si el prompt menciona «millones»).
+        # Seguridad y rendimiento son fundamentales en toda app media/alta (anti vibe-coding inseguro/lento).
         if request.complexity in SPRINT_COMPLEXITIES:
+            specs.append(SECURITY_SPRINT)
             specs.append(PERFORMANCE_SPRINT)
         if high:
             specs.append(PILOT_SPRINT)
