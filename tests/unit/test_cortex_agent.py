@@ -184,14 +184,14 @@ def test_low_complexity_keeps_single_plan(cortex):
 def test_medium_new_app_is_split_into_logical_sprints_identified_by_app(cortex):
     request = _medium_app(cortex)
     sprints = request.to_dict()["sprints"]
-    assert [s["clave"] for s in sprints] == ["fundaciones", "interfaz", "reportes", "salida"]
-    assert [s["etiqueta"] for s in sprints] == [f"Sprint {n} de 4" for n in range(1, 5)]
+    assert [s["clave"] for s in sprints] == ["fundaciones", "interfaz", "reportes", "rendimiento", "salida"]
+    assert [s["etiqueta"] for s in sprints] == [f"Sprint {n} de 5" for n in range(1, 6)]
     assert sprints[0]["id"] == "talleres_sicita-sprint-01" and sprints[1]["depende_de"] == "talleres_sicita-sprint-01"
     assert all(s["estado"] == "planificado" for s in sprints)
     foundations = {t["agente"]: t for t in sprints[0]["tareas"]}
     assert "PostgreSQL" in foundations["Nexus"]["accion"] and foundations["Prism"]["depende_de"] == ["s01_vector"]
-    assert request.to_dict()["progreso_sprints"] == {"aplicacion": "talleres_sicita", "total": 4, "completados": 0,
-                                                     "actual": None, "siguiente": "Sprint 1 de 4"}
+    assert request.to_dict()["progreso_sprints"] == {"aplicacion": "talleres_sicita", "total": 5, "completados": 0,
+                                                     "actual": None, "siguiente": "Sprint 1 de 5"}
 
 
 def test_new_app_foundations_start_with_its_own_repository(cortex):
@@ -242,9 +242,9 @@ def test_humans_decide_when_each_sprint_starts(cortex):
     assert all(s.status.value == "pendiente" for s in request.sprints)
     assert all(t.status.value == "por_sprint" for t in request.plan)
     assert all(t.status.value == "espera_sprint" for s in request.sprints for t in s.tareas)
-    assert "inicia el Sprint 1 de 4" in request.to_dict()["siguiente_paso"]
+    assert "inicia el Sprint 1 de 5" in request.to_dict()["siguiente_paso"]
 
-    with pytest.raises(ValueError, match="Completa primero el Sprint 1 de 4"):
+    with pytest.raises(ValueError, match="Completa primero el Sprint 1 de 5"):
         cortex.start_sprint(request.id, 2, "giovanny")
     request = cortex.start_sprint(request.id, 1, "giovanny")
     assert all(t.status.value == "lista_para_delegar" for t in request.sprints[0].tareas)
@@ -256,23 +256,23 @@ def test_humans_decide_when_each_sprint_starts(cortex):
     request = cortex.complete_sprint(request.id, 1, "giovanny", "Base creada en PostgreSQL")
     assert request.sprints[0].notas == "Base creada en PostgreSQL"
     assert request.sprints[1].status.value == "pendiente" and request.current_sprint() is None
-    assert "inicia el Sprint 2 de 4 (talleres_sicita-sprint-02)" in request.to_dict()["siguiente_paso"]
+    assert "inicia el Sprint 2 de 5 (talleres_sicita-sprint-02)" in request.to_dict()["siguiente_paso"]
 
-    for numero in (2, 3, 4):
+    for numero in (2, 3, 4, 5):
         cortex.start_sprint(request.id, numero, "giovanny")
         request = cortex.complete_sprint(request.id, numero, "giovanny")
     assert request.status == RequestStatus.COMPLETED
     with pytest.raises(ValueError):
         cortex.answer(request.id, {"objetivo": "otro"})
     with pytest.raises(KeyError):
-        cortex.start_sprint(request.id, 5, "giovanny")
+        cortex.start_sprint(request.id, 6, "giovanny")
 
 
 def test_discarded_request_leaves_app_view_and_blocks_sprints(cortex):
     stale = cortex.approve(_medium_app(cortex).id, "giovanny")
     cortex.start_sprint(stale.id, 1, "giovanny")
     active = cortex.approve(_medium_app(cortex).id, "giovanny")
-    assert len(cortex.sprints_for_app("talleres_sicita")) == 8
+    assert len(cortex.sprints_for_app("talleres_sicita")) == 10
 
     with pytest.raises(ValueError, match="quién descarta"):
         cortex.discard(stale.id, " ")
@@ -280,7 +280,7 @@ def test_discarded_request_leaves_app_view_and_blocks_sprints(cortex):
     assert stale.status == RequestStatus.DISCARDED and stale.discard_reason == "Duplicada de una prueba anterior"
     assert all(s.status.value == "cancelado" for s in stale.sprints)
     assert "descartada" in stale.to_dict()["siguiente_paso"]
-    assert [r.id for r, _ in cortex.sprints_for_app("talleres_sicita")] == [active.id] * 4
+    assert [r.id for r, _ in cortex.sprints_for_app("talleres_sicita")] == [active.id] * 5
 
     for blocked in (lambda: cortex.start_sprint(stale.id, 2, "giovanny"),
                     lambda: cortex.complete_sprint(stale.id, 1, "giovanny"),
@@ -296,8 +296,24 @@ def test_completed_sprints_are_kept_when_discarding(cortex):
     cortex.start_sprint(request.id, 1, "giovanny")
     cortex.complete_sprint(request.id, 1, "giovanny")
     request = cortex.discard(request.id, "giovanny")
-    assert [s.status.value for s in request.sprints] == ["completado", "cancelado", "cancelado", "cancelado"]
+    assert [s.status.value for s in request.sprints] == [
+        "completado", "cancelado", "cancelado", "cancelado", "cancelado"]
     assert request.discard_reason is None
+
+
+def test_medium_new_app_always_includes_performance_sprint_with_all_owners(cortex):
+    from src.agents import performance_checklist
+
+    sprints = _medium_app(cortex).to_dict()["sprints"]
+    rendimiento = next(s for s in sprints if s["clave"] == "rendimiento")
+    agentes = [t["agente"] for t in rendimiento["tareas"]]
+    assert agentes == ["Nexus", "Synapse", "Aurora", "Insight", "Vector", "Prism", "Orbit", "Argus"]
+    texto = " ".join(t["accion"] for t in rendimiento["tareas"]).lower()
+    for fragmento in ("esqueleto", "webp", "avif", "cdn", "cola", "n+1", "brotli", "opentelemetry",
+                      "virtualiz", "pool", "cach", "móvil", "red lenta", "docs/rendimiento.md"):
+        assert fragmento in texto, fragmento
+    assert performance_checklist.RULE_FILE in rendimiento["tareas"][0]["accion"]
+    assert "p95" in rendimiento["entregable"].lower()
 
 
 def test_high_complexity_adds_compliance_performance_and_pilot(cortex):
@@ -343,7 +359,7 @@ def test_api_sprint_flow():
     assert client.post(f"{url}/2/iniciar", json={"iniciado_por": "giovanny"}).status_code == 409
     assert client.post(f"{url}/9/iniciar", json={"iniciado_por": "giovanny"}).status_code == 404
     started = client.post(f"{url}/1/iniciar", json={"iniciado_por": "giovanny"}).json()
-    assert started["progreso_sprints"]["actual"] == "Sprint 1 de 4"
+    assert started["progreso_sprints"]["actual"] == "Sprint 1 de 5"
     done = client.post(f"{url}/1/completar", json={"completado_por": "giovanny", "notas": "ok"}).json()
     assert done["sprints"][0]["estado"] == "completado" and done["sprints"][1]["estado"] == "pendiente"
 

@@ -42,6 +42,14 @@ Regla de todas las aplicaciones de la fábrica (`.cursor/rules/permisos-por-empr
 - **Aurora.** Pantalla `permissions` (matriz por rol, ajustes por usuario con el origen de cada permiso, historial) y menú filtrado con `modulos_permitidos`.
 - **Cortex.** Sus planes reparten la regla entre Sentinel, Nexus, Vector, Aurora y Prism desde las fundaciones hasta la interfaz.
 
+## Rendimiento por aplicación
+
+Regla de todas las aplicaciones (`.cursor/rules/rendimiento-por-aplicacion.mdc`, checklist `src/agents/performance_checklist.py`).
+
+- **Prácticas.** Esqueletos de carga, WebP/AVIF, CDN, cola de trabajos, sin N+1, Brotli, índices, OpenTelemetry, SSR/shell crítico, listas virtualizadas, pool de conexiones, caché; prueba en móvil y red lenta.
+- **Cortex.** Sprint `rendimiento` obligatorio en apps nuevas de complejidad media o alta; tareas a Nexus, Synapse, Aurora, Insight, Vector, Prism, Orbit y Argus.
+- **Evidencia.** `docs/rendimiento.md` en el repo de la aplicación (p95, errores, móvil/red lenta).
+
 ## Cortex: cómo orquesta
 
 Cortex es la puerta de entrada de la fábrica. No construye nada por sí mismo:

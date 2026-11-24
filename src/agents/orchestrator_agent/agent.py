@@ -35,6 +35,7 @@ from src.agents.agent_catalog import (
     VECTOR,
     AgentProfile,
 )
+from src.agents import performance_checklist
 
 logger = logging.getLogger(__name__)
 
@@ -480,18 +481,24 @@ DEPENDENCIES: Dict[str, Tuple[AgentProfile, ...]] = {
 DEFAULT_ACTIONS: Dict[str, str] = {
     NEXUS.codename: "Diseñar o ajustar el modelo de datos, índices, migraciones y los procedimientos almacenados de acceso.",
     MATRIX.codename: "Traducir los requisitos en reglas de negocio validadas.",
-    SYNAPSE.codename: "Definir contratos de API e integraciones externas.",
-    INSIGHT.codename: "Diseñar reportes, KPIs y dashboards.",
-    AURORA.codename: "Diseñar flujos de usuario, pantallas y componentes accesibles.",
+    SYNAPSE.codename: ("Definir contratos de API e integraciones externas; incluir compresión Brotli, cabeceras de caché, "
+                       "origen CDN y colas para trabajos lentos cuando aplique (rendimiento-por-aplicacion.mdc)."),
+    INSIGHT.codename: ("Diseñar reportes, KPIs y dashboards con caché o materialización de agregaciones pesadas "
+                       "(rendimiento-por-aplicacion.mdc)."),
+    AURORA.codename: ("Diseñar flujos de usuario, pantallas y componentes accesibles, con esqueletos de carga, imágenes "
+                      "WebP/AVIF, listas virtualizadas y shell crítico o SSR (rendimiento-por-aplicacion.mdc)."),
     GENESIS.codename: "Diseñar los componentes de IA requeridos.",
     VECTOR.codename: ("Implementar los cambios siguiendo los diseños aprobados; acceso a datos solo por procedimientos "
-                      "almacenados y cada ruta con su permiso de opción y evento."),
-    PRISM.codename: "Validar con pruebas unitarias, de integración y de seguridad; bloquear SQL de datos en línea y rutas sin permiso.",
-    ORBIT.codename: "Desplegar a producción con plan de reversión.",
+                      "almacenados, cada ruta con su permiso de opción y evento, pool de conexiones, caché y sin N+1."),
+    PRISM.codename: ("Validar con pruebas unitarias, de integración y de seguridad; bloquear SQL de datos en línea y "
+                     "rutas sin permiso; en sprints de rendimiento exigir carga y prueba móvil/red lenta."),
+    ORBIT.codename: ("Desplegar a producción con plan de reversión; CDN, workers de cola y compresión cuando el sprint "
+                    "de rendimiento lo exija."),
     SENTINEL.codename: ("Definir autenticación, roles y auditoría; exigir MFA a los roles sensibles; permisos por empresa "
                         "sobre cada opción y evento, definidos por rol y ajustados por usuario con concesiones y "
                         "restricciones que no chocan, con historial (permisos-por-empresa.mdc)."),
-    ARGUS.codename: "Configurar métricas, sondas de salud y alertas; verificar el SLA después del despliegue.",
+    ARGUS.codename: ("Configurar métricas OpenTelemetry (o equivalentes), sondas de salud y alertas de p95; verificar el "
+                    "SLA después del despliegue."),
 }
 PERMISSIONS_ACTIONS: Dict[str, str] = {
     NEXUS.codename: ("Mantener la plantilla de permisos por empresa (opciones, eventos, roles, concesiones, "
@@ -521,19 +528,23 @@ TYPE_ACTIONS: Dict[RequestType, Dict[str, str]] = {
                          "para monetizar."),
         AURORA.codename: ("Diseñar el sistema de diseño y las pantallas: shell con navegación filtrada por permisos, "
                           "tablero, listados con filtros y exportación, formularios por secciones, detalle, configuración, "
-                          "administración de permisos y suscripción/licencias (asientos y módulos)."),
+                          "administración de permisos y suscripción/licencias (asientos y módulos); esqueletos de carga, "
+                          "WebP/AVIF, listas virtualizadas y shell crítico o SSR."),
         VECTOR.codename: ("Crear la carpeta {aplicacion}/ junto a kinetix-studio y su repositorio git independiente, e "
                           "implementar allí los diseños aprobados; nada de la aplicación se guarda en kinetix-studio. "
                           "Toda ruta de módulo de pago exige licencia además del permiso RBAC; las altas de equipo "
-                          "respetan el cupo de asientos."),
+                          "respetan el cupo de asientos. Incluir pool de conexiones, caché y preparación para Brotli, "
+                          "CDN y cola de trabajos (rendimiento-por-aplicacion.mdc)."),
     },
     RequestType.SCALE: {
-        NEXUS.codename: "Analizar consultas lentas; proponer índices, particionamiento y pools de conexión.",
-        SYNAPSE.codename: "Agregar caché y rate limiting en las APIs más cargadas.",
-        VECTOR.codename: "Optimizar el código del cuello de botella identificado.",
-        PRISM.codename: "Ejecutar pruebas de carga contra el objetivo acordado.",
-        ORBIT.codename: "Desplegar de forma escalonada y vigilar métricas.",
-        ARGUS.codename: "Comparar latencia, errores y recursos contra la línea base y el objetivo de carga.",
+        NEXUS.codename: ("Analizar consultas lentas y N+1; proponer índices, particionamiento y pools de conexión "
+                         "(rendimiento-por-aplicacion.mdc)."),
+        SYNAPSE.codename: ("Agregar caché, Brotli, CDN, rate limiting y colas de trabajos en las APIs más cargadas."),
+        VECTOR.codename: ("Optimizar el cuello de botella: sin N+1, caché, virtualización, formatos de imagen modernos "
+                          "y pool reutilizado."),
+        PRISM.codename: ("Ejecutar pruebas de carga y de móvil/red lenta contra el objetivo; evidencia en docs/rendimiento.md."),
+        ORBIT.codename: "Desplegar de forma escalonada con CDN/workers y vigilar métricas.",
+        ARGUS.codename: ("Comparar latencia OpenTelemetry p95/p99, errores y recursos contra la línea base y el objetivo."),
     },
     RequestType.ENHANCEMENT: {
         AURORA.codename: ("Diseñar las pantallas de la funcionalidad dentro del menú filtrado por permisos, con acciones "
@@ -618,16 +629,18 @@ CAPABILITY_SPRINTS: Dict[str, SprintSpec] = {
                           (VECTOR, "Implementar los clientes e integraciones definidos."),
                           (PRISM, "Pruebas de contrato e integración contra dobles de los sistemas externos."))),
     "interfaz": ("interfaz", "Interfaz de usuario", "Construir las pantallas y flujos principales.",
-                 "Pantallas navegables y accesibles (WCAG AA).", (
-                     (AURORA, "Diseñar flujos de usuario, pantallas y componentes accesibles. "
+                 "Pantallas navegables, accesibles (WCAG AA) y con percepción de velocidad (esqueletos, virtualización).", (
+                     (AURORA, "Diseñar flujos de usuario, pantallas y componentes accesibles con esqueletos de carga, "
+                              "imágenes WebP/AVIF, listas virtualizadas y shell crítico o SSR. "
                               + PERMISSIONS_ACTIONS[AURORA.codename]),
-                     (VECTOR, "Implementar las pantallas con el sistema de diseño y el menú por permisos efectivos."),
-                     (PRISM, "Pruebas E2E de los flujos principales, del menú filtrado por permisos y revisión de "
-                             "accesibilidad."))),
+                     (VECTOR, "Implementar las pantallas con el sistema de diseño, el menú por permisos efectivos, "
+                              "esqueletos, virtualización y formatos de imagen modernos."),
+                     (PRISM, "Pruebas E2E de los flujos principales (también en viewport móvil), del menú filtrado por "
+                             "permisos y revisión de accesibilidad."))),
     "reportes": ("reportes", "Reportes y analítica", "Entregar los reportes, KPIs y dashboards acordados.",
-                 "Dashboards con datos reales y KPIs verificados.", (
+                 "Dashboards con datos reales, KPIs verificados y caché de agregaciones pesadas.", (
                      (INSIGHT, DEFAULT_ACTIONS[INSIGHT.codename]),
-                     (VECTOR, "Implementar consultas y vistas de los reportes."),
+                     (VECTOR, "Implementar consultas y vistas de los reportes con caché donde el volumen lo exija."),
                      (PRISM, "Validar los KPIs contra datos de prueba conocidos."))),
     "ia": ("ia", "Componentes de IA", "Incorporar los componentes de IA requeridos.",
            "Componentes de IA integrados con métricas de calidad.", (
@@ -645,11 +658,11 @@ COMPLIANCE_SPRINT: SprintSpec = (
         (SENTINEL, "Asegurar auditoría completa, retención de registros y MFA en roles sensibles."),
         (PRISM, "Auditoría de seguridad OWASP y verificación de los controles normativos.")))
 PERFORMANCE_SPRINT: SprintSpec = (
-    "rendimiento", "Rendimiento y carga", "Garantizar el volumen y la concurrencia esperados.",
-    "Pruebas de carga que cumplen el objetivo.", (
-        (NEXUS, "Revisar índices, particionamiento y planes de consulta para el volumen esperado."),
-        (PRISM, "Ejecutar pruebas de carga contra el objetivo de concurrencia."),
-        (ARGUS, "Medir la línea base de latencia, errores y recursos.")))
+    "rendimiento", "Rendimiento y carga",
+    "Garantizar percepción de velocidad y el volumen esperado (rendimiento-por-aplicacion.mdc).",
+    performance_checklist.exit_criteria(),
+    performance_checklist.sprint_tasks(),
+)
 PILOT_SPRINT: SprintSpec = (
     "piloto", "Piloto controlado", "Validar la aplicación con usuarios reales en un entorno controlado.",
     "Piloto aprobado por el negocio.", (
@@ -679,13 +692,15 @@ def _sprint_specs(request: "OrchestrationRequest", corpus: str) -> List[SprintSp
                 (VECTOR, "Crear en el repositorio de {aplicacion} el esqueleto del proyecto (clean architecture) con "
                          "autenticación integrada, repositorios que solo llaman procedimientos almacenados, permisos "
                          "efectivos por opción y evento en cada ruta, catálogo de permisos, enforcement de licencia "
-                         "(asientos y módulos) y CI."),
+                         "(asientos y módulos), pool de conexiones y CI listo para métricas/OpenTelemetry."),
                 (PRISM, "Configurar pruebas automáticas y cobertura mínima en CI, incluida la prueba de que ninguna "
-                        "ruta queda sin permiso y las de cupo de asientos / módulo no licenciado.")))]
+                        "ruta queda sin permiso, las de cupo de asientos / módulo no licenciado y el arnés de carga / "
+                        "móvil-red lenta del sprint de rendimiento.")))]
         specs.extend(CAPABILITY_SPRINTS[c] for c in NEW_APP_CAPABILITY_ORDER if c in caps)
         if high and _contains_any(corpus, COMPLIANCE):
             specs.append(COMPLIANCE_SPRINT)
-        if high and _contains_any(corpus, HIGH_VOLUME):
+        # Rendimiento es fundamental en toda app media/alta (no solo si el prompt menciona «millones»).
+        if request.complexity in SPRINT_COMPLEXITIES:
             specs.append(PERFORMANCE_SPRINT)
         if high:
             specs.append(PILOT_SPRINT)

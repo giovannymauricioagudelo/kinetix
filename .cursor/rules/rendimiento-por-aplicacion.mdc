@@ -1,0 +1,89 @@
+---
+description: Rendimiento percibido y de carga como base obligatoria de toda aplicación generada por la fábrica
+alwaysApply: true
+---
+
+# Rendimiento por aplicación
+
+Regla obligatoria para **toda aplicación generada por la fábrica**. Una app lenta pierde usuarios: cada entrega debe aplicar las prácticas de esta regla y dejar evidencia medible. Checklist canónico: `src/agents/performance_checklist.py`.
+
+## Objetivos por defecto (Prism)
+
+Salvo que Cortex acuerde otros con el solicitante:
+
+| Métrica | Objetivo |
+| --- | --- |
+| Usuarios concurrentes (mínimo de referencia) | ≥ 100 (o el volumen del dominio) |
+| p95 lecturas | ≤ 500 ms |
+| p95 escrituras | ≤ 1 s |
+| Errores bajo carga | < 1 % |
+| Móvil + red lenta | Flujos críticos usables con throttling 3G / Slow 4G |
+
+Evidencia: `docs/rendimiento.md` (+ JSON de carga cuando exista prueba de carga).
+
+## Quién valida qué
+
+| Práctica | Agente |
+| --- | --- |
+| Esqueletos de carga | Aurora → Vector |
+| Imágenes WebP / AVIF | Aurora → Vector |
+| Listas virtualizadas | Aurora → Vector |
+| Render en servidor (SSR / shell crítico) | Aurora → Vector |
+| Índices y planes de consulta | Nexus |
+| Evitar consultas N+1 | Nexus (procs) + Vector (repositorios) |
+| Pool de conexiones | Nexus (diseño) + Vector (gateway) |
+| Brotli (o gzip de respaldo) | Synapse → Orbit |
+| CDN y Cache-Control de estáticos | Synapse → Orbit |
+| Cola de trabajos (correo, IA, reportes, lotes) | Synapse → Vector → Orbit |
+| Caché de lecturas calientes | Vector + Insight (reportes/KPIs) |
+| OpenTelemetry (trazas, p95/p99) | Argus (+ instrumentación Vector/Synapse) |
+| Pruebas de carga y móvil/red lenta | Prism |
+| Despliegue CDN / workers / compresión | Orbit |
+
+## Cortex
+
+- Toda aplicación nueva de complejidad **media** o **alta** incluye el sprint `rendimiento` (no solo si el prompt menciona «millones de usuarios»).
+- El sprint asigna tareas a Nexus, Synapse, Aurora, Insight, Vector, Prism, Orbit y Argus según `performance_checklist.sprint_tasks()`.
+- Solicitudes tipo `escalar` siguen el flujo SCALE (diagnóstico → optimización → carga).
+
+## Nexus
+
+- Índices en listados y analítica; RCSI en SQL Server nuevo; sin N+1 en procedimientos (JOIN o lote).
+- El rol de aplicación sigue siendo solo `EXECUTE`; el pool lo usa el gateway de la app.
+
+## Synapse / Vector
+
+- Compresión Brotli en respuestas; cabeceras de caché para estáticos; origen CDN documentado.
+- Trabajos lentos fuera del request HTTP (cola + worker).
+- Repositorios: una ida a la base por caso de uso (procs que devuelven lo necesario); pool reutilizado; caché con invalidación explícita.
+- Instrumentación compatible con OpenTelemetry / métricas que consume Argus.
+
+## Aurora
+
+- Skeleton en estados de carga; imágenes modernas; virtualización en listados largos; mobile-first; SSR o shell crítico para el primer paint.
+
+## Insight
+
+- Tableros y agregaciones con caché o materialización; no recalcular en cada petición bajo carga.
+
+## Prism
+
+- Prueba de carga contra el objetivo; prueba en viewport móvil y red lenta; `approval = false` si no hay evidencia en `docs/rendimiento.md` al cerrar el sprint de rendimiento.
+- CI: no bloquear por umbral de carga en cada PR; sí exigir que el script y la evidencia existan tras el sprint.
+
+## Argus / Orbit
+
+- Argus: p95/p99, errores y recursos; alertas si se rompe el objetivo.
+- Orbit: CDN, workers de cola y compresión en el entorno desplegado; reversión lista.
+
+## Verificación rápida
+
+- [ ] Esqueletos visibles al cargar listados/fichas
+- [ ] Imágenes WebP/AVIF en la ruta crítica
+- [ ] Listas largas virtualizadas
+- [ ] SSR o shell crítico
+- [ ] Índices + sin N+1 + pool
+- [ ] Brotli + CDN + cola de trabajos
+- [ ] Caché de lecturas/reportes
+- [ ] OpenTelemetry / métricas Argus
+- [ ] Carga + móvil/red lenta documentados en `docs/rendimiento.md`
